@@ -73,7 +73,13 @@ jobs:
           if [ -z "$id" ]; then
             gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes \
               --title "Poe2 Launcher $GITHUB_REF_NAME" "${flags[@]}"
-            id=$(find_id)
+            # The list API shows the new draft only after a moment (the first run of v0.1.0 looked
+            # at once and found nothing), so ask a few times.
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+              id=$(find_id)
+              [ -n "$id" ] && break
+              sleep 3
+            done
           fi
           test -n "$id" || { echo "::error::release for $GITHUB_REF_NAME not found"; exit 1; }
           echo "release_id=$id" >> "$GITHUB_OUTPUT"
