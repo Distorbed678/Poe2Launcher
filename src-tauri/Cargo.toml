@@ -1,6 +1,6 @@
 [package]
 name = "poe2-launcher"
-version = "0.1.0"
+version = "0.1.1"
 description = "Launcher for the PoE2 0.5.5e private server: server profiles, game install from Steam depots, hook deploy, mods"
 edition = "2024"
 license = "MIT"
