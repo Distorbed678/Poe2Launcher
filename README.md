@@ -92,7 +92,7 @@ The hook DLLs come from the *Hook DLL directory* setting: a build of Poe2ClientH
 
 ## Mods
 
-Spec: `modules/client-hook/docs/mod-manifest.md` (Poe2ClientHook). Mods are installed into `<install>/poe-hook-mods/<id>/` and `<install>/poe-hook-mods/state.toml` holds the contract with the (not yet existing) loader:
+Spec: `modules/client-hook/docs/mod-manifest.md` (Poe2ClientHook). Mods are installed into `<install>/poe-hook-mods/<id>/` and `<install>/poe-hook-mods/state.toml` holds the contract with the DLL's mod loader (`poe-hook/src/mods.rs` in Poe2ClientHook; it loads the enabled mods in this order, never in official mode):
 
 ```toml
 enabled = ["core-lib", "my-mod"]   # in load order
