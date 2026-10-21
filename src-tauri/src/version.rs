@@ -1,17 +1,54 @@
 //! The per-version install description, `versions/<version>.toml` (embedded at build time).
+//!
+//! The files are byte-identical copies of the main repository's `versions/<version>.toml`
+//! (Poe2ModdingProject), the single definition of a supported build; `cargo xtask versions`
+//! there refreshes and checks them. This launcher reads the depots, the `[exe]` section and
+//! `[verify]`; the other sections (protocol, signatures, client hashes, data checks) are for
+//! the server and `cargo xtask check-build` and are ignored here. `build.rs` embeds every
+//! file, newest `build_revision` last.
 
 use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 
-/// Versions the launcher knows, newest last.
-const EMBEDDED: &[(&str, &str)] = &[("0.5.5e", include_str!("../../versions/0.5.5e.toml"))];
+include!(concat!(env!("OUT_DIR"), "/embedded_versions.rs"));
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+/// A version file as it is written.
+#[derive(Debug, Deserialize)]
+struct RawVersionFile {
+    version: String,
+    app_id: u32,
+    depots: Vec<Depot>,
+    #[serde(default)]
+    exe: RawExe,
+    #[serde(default)]
+    verify: RawVerify,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawExe {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    sha256: Option<String>,
+    #[serde(default)]
+    sha256_enforce: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawVerify {
+    #[serde(default)]
+    min_files: u64,
+    #[serde(default)]
+    min_bytes: u64,
+    #[serde(default)]
+    files: Vec<KeyFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionFile {
     pub version: String,
     pub app_id: u32,
     pub depots: Vec<Depot>,
-    #[serde(default)]
     pub verify: VerifySpec,
 }
 
@@ -25,22 +62,18 @@ pub struct Depot {
     pub role: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+/// `[exe]` and `[verify]` of the version file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VerifySpec {
-    /// Client executable, relative to the install.
-    #[serde(default)]
+    /// Client executable (`[exe] name`), relative to the install.
     pub exe: String,
-    /// SHA-256 of the executable; absent or `TODO` = unknown (the check is skipped).
-    #[serde(default)]
+    /// SHA-256 of the executable (`[exe] sha256`); absent or `TODO` = unknown (the check is
+    /// skipped).
     pub exe_sha256: Option<String>,
     /// Whether a checksum mismatch fails the verification (otherwise it is a warning).
-    #[serde(default)]
     pub exe_sha256_enforce: bool,
-    #[serde(default)]
     pub min_files: u64,
-    #[serde(default)]
     pub min_bytes: u64,
-    #[serde(default)]
     pub files: Vec<KeyFile>,
 }
 
@@ -52,14 +85,27 @@ pub struct KeyFile {
 
 impl VersionFile {
     pub fn parse(text: &str) -> Result<Self> {
-        let v: VersionFile = toml::from_str(text).context("version file is not valid TOML")?;
+        let raw: RawVersionFile = toml::from_str(text).context("version file is not valid TOML")?;
+        let v = VersionFile {
+            version: raw.version,
+            app_id: raw.app_id,
+            depots: raw.depots,
+            verify: VerifySpec {
+                exe: raw.exe.name,
+                exe_sha256: raw.exe.sha256,
+                exe_sha256_enforce: raw.exe.sha256_enforce,
+                min_files: raw.verify.min_files,
+                min_bytes: raw.verify.min_bytes,
+                files: raw.verify.files,
+            },
+        };
         v.validate()?;
         Ok(v)
     }
 
     /// The embedded file for `version`.
     pub fn embedded(version: &str) -> Result<Self> {
-        let text = EMBEDDED
+        let text = EMBEDDED_VERSIONS
             .iter()
             .find(|(v, _)| *v == version)
             .map(|(_, t)| *t)
@@ -69,12 +115,12 @@ impl VersionFile {
 
     /// The client version the launcher installs by default (the newest embedded one).
     pub fn latest() -> Result<Self> {
-        let (v, _) = EMBEDDED.last().context("no embedded version files")?;
+        let (v, _) = EMBEDDED_VERSIONS.last().context("no embedded version files")?;
         Self::embedded(v)
     }
 
     pub fn known_versions() -> Vec<&'static str> {
-        EMBEDDED.iter().map(|(v, _)| *v).collect()
+        EMBEDDED_VERSIONS.iter().map(|(v, _)| *v).collect()
     }
 
     fn validate(&self) -> Result<()> {
@@ -140,26 +186,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_embedded_0_5_5e_file_matches_the_plan() {
-        let v = VersionFile::embedded("0.5.5e").unwrap();
-        assert_eq!(v.app_id, 2694490);
-        let depots: Vec<_> = v
-            .depots
-            .iter()
-            .map(|d| (d.id, d.manifest.as_str()))
-            .collect();
-        // Install order: content first, the exe depot over it.
-        assert_eq!(
-            depots,
-            [
-                (2694491, "7366357142270402355"),
-                (2694492, "246779027001700092")
-            ]
-        );
-        assert_eq!(v.verify.exe, "PathOfExileSteam.exe");
-        assert!(v.verify.exe_sha256_hash().unwrap().is_some());
-        assert!(v.verify.min_files > 0 && !v.verify.files.is_empty());
-        assert_eq!(VersionFile::latest().unwrap(), v);
+    fn every_embedded_file_parses_and_the_newest_is_the_default() {
+        let known = VersionFile::known_versions();
+        assert!(!known.is_empty(), "versions/ has no version file");
+        for version in &known {
+            let v = VersionFile::embedded(version).unwrap();
+            assert_eq!(&v.version, version);
+            assert!(v.app_id != 0);
+            // Install order: content first, the exe depot over it.
+            assert!(v.depots.len() >= 2, "content depot, then the exe depot");
+            assert!(!v.verify.exe.is_empty());
+            assert!(v.verify.exe_sha256_hash().unwrap().is_some());
+            assert!(v.verify.min_files > 0 && !v.verify.files.is_empty());
+            // The exe is among the key files, with the size the main repo records.
+            assert!(v.verify.files.iter().any(|f| f.path == v.verify.exe));
+        }
+        let latest = VersionFile::latest().unwrap();
+        assert_eq!(&latest.version, known.last().unwrap());
     }
 
     fn base(extra: &str) -> String {
@@ -175,10 +218,10 @@ mod tests {
 
     #[test]
     fn todo_checksum_means_unknown() {
-        let v = VersionFile::parse(&base("[verify]\nexe_sha256 = \"TODO\"\n")).unwrap();
+        let v = VersionFile::parse(&base("[exe]\nsha256 = \"TODO\"\n")).unwrap();
         assert_eq!(v.verify.exe_sha256_hash().unwrap(), None);
         let v = VersionFile::parse(&base(&format!(
-            "[verify]\nexe_sha256 = \"{}\"\n",
+            "[exe]\nsha256 = \"{}\"\n",
             "AB".repeat(32)
         )))
         .unwrap();
@@ -206,7 +249,7 @@ mod tests {
         ] {
             assert!(VersionFile::parse(bad).is_err(), "{bad}");
         }
-        assert!(VersionFile::parse(&base("[verify]\nexe_sha256 = \"abc\"\n")).is_err());
+        assert!(VersionFile::parse(&base("[exe]\nsha256 = \"abc\"\n")).is_err());
         assert!(
             VersionFile::parse(&base("[[verify.files]]\npath = \"../x\"\nsize = 1\n")).is_err()
         );

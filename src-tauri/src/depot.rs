@@ -588,7 +588,7 @@ mod tests {
 
     fn job(remember: bool, code: bool, validate: bool) -> DownloadJob {
         DownloadJob {
-            version: VersionFile::embedded("0.5.5e").unwrap(),
+            version: VersionFile::latest().unwrap(),
             dir: PathBuf::from("/games/poe2"),
             username: "steamuser".into(),
             remember_password: remember,

@@ -239,9 +239,10 @@ pub fn human(bytes: u64) -> String {
 mod tests {
     use super::*;
 
-    fn version(extra: &str) -> VersionFile {
+    /// A version file with `exe` lines under `[exe]` and `verify` lines under `[verify]`.
+    fn version(exe: &str, verify: &str) -> VersionFile {
         VersionFile::parse(&format!(
-            "version = \"t\"\napp_id = 1\n[[depots]]\nid = 2\nmanifest = \"3\"\n[verify]\nexe = \"game.exe\"\n{extra}"
+            "version = \"t\"\napp_id = 1\n[[depots]]\nid = 2\nmanifest = \"3\"\n[exe]\nname = \"game.exe\"\n{exe}\n[verify]\n{verify}"
         ))
         .unwrap()
     }
@@ -266,9 +267,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         install(tmp.path());
         let sha = hex::encode(Sha256::digest(b"exe-bytes"));
-        let v = version(&format!(
-            "exe_sha256 = \"{sha}\"\nexe_sha256_enforce = true\nmin_files = 2\nmin_bytes = 100\n[[verify.files]]\npath = \"Bundles2/a.bin\"\nsize = 100\n"
-        ));
+        let v = version(
+            &format!("sha256 = \"{sha}\"\nsha256_enforce = true\n"),
+            "min_files = 2\nmin_bytes = 100\n[[verify.files]]\npath = \"Bundles2/a.bin\"\nsize = 100\n",
+        );
         let r = verify(tmp.path(), &v);
         assert!(r.ok, "{:?}", r.checks);
         assert_eq!(r.exe_sha256.as_deref(), Some(sha.as_str()));
@@ -281,6 +283,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         install(tmp.path());
         let v = version(
+            "",
             "min_files = 10\n[[verify.files]]\npath = \"Bundles2/a.bin\"\nsize = 99\n[[verify.files]]\npath = \"nope.dll\"\nsize = 1\n",
         );
         let r = verify(tmp.path(), &v);
@@ -300,17 +303,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         install(tmp.path());
         let wrong = "00".repeat(32);
-        let warn = verify(tmp.path(), &version(&format!("exe_sha256 = \"{wrong}\"\n")));
+        let warn = verify(tmp.path(), &version(&format!("sha256 = \"{wrong}\"\n"), ""));
         assert!(warn.ok);
         assert_eq!(warn.checks.last().unwrap().status, Status::Warn);
         let hard = verify(
             tmp.path(),
-            &version(&format!(
-                "exe_sha256 = \"{wrong}\"\nexe_sha256_enforce = true\n"
-            )),
+            &version(&format!("sha256 = \"{wrong}\"\nsha256_enforce = true\n"), ""),
         );
         assert!(!hard.ok);
-        let todo = verify(tmp.path(), &version("exe_sha256 = \"TODO\"\n"));
+        let todo = verify(tmp.path(), &version("sha256 = \"TODO\"\n", ""));
         assert!(todo.ok);
         let last = todo.checks.last().unwrap();
         assert_eq!(last.status, Status::Skipped);
@@ -322,7 +323,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         install(tmp.path());
         std::fs::remove_file(tmp.path().join("game.exe")).unwrap();
-        let v = version("");
+        let v = version("", "");
         assert!(!verify(tmp.path(), &v).ok);
         assert!(!looks_installed(tmp.path(), &v));
     }

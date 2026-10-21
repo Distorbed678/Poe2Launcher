@@ -42,14 +42,16 @@ src-tauri/src/
   profiles.rs        server profiles (profiles.json, no secrets)
   keystore.rs        TokenStore: KeyringStore (keyring crate) / MemoryStore (tests)
   settings.rs        settings.json
-  version.rs         versions/<version>.toml (embedded)
+  version.rs         versions/<version>.toml (embedded by build.rs: every file, newest build_revision last)
   depot.rs           DepotDownloader: pinned fetch, argument builder, prompt/progress parser, runner
   verify.rs          install verification
   play.rs            deploy options, token file, Proton/native launch (poe-hook-deploy)
   mods.rs            mod.toml validation, compatibility, load order, state.toml, zip/folder install
   paths.rs           launcher dirs and the "never the Steam install" guard
 versions/
-  0.5.5e.toml        app, depots + manifests (install order), verification values
+  <version>.toml     COPY of Poe2ModdingProject's versions/<version>.toml (the single source; refreshed by
+                     `cargo xtask versions` there, never edited here): app, depots + manifests (install
+                     order), [exe] and [verify] values; the other sections are ignored
   depotdownloader.toml  pinned DepotDownloader release, per-platform SHA-256
 client-hook/         submodule: Poe2ClientHook (poe-hook-deploy used as a path dependency)
 ```
@@ -69,12 +71,12 @@ client-hook/         submodule: Poe2ClientHook (poe-hook-deploy used as a path d
 
 ## Game install
 
-`versions/0.5.5e.toml`: app 2694490; depot 2694491 manifest 7366357142270402355 (content), depot 2694492 manifest 246779027001700092 (Windows exe). Both go into one directory in file order (exe over content), in **one** DepotDownloader run so Steam Guard is asked once.
+The version file (`versions/<version>.toml`, a byte-identical copy of the main repo's file, which is the single definition of a supported build): for 0.5.5e app 2694490; depot 2694491 manifest 7366357142270402355 (content), depot 2694492 manifest 246779027001700092 (Windows exe). Both go into one directory in file order (exe over content), in **one** DepotDownloader run so Steam Guard is asked once.
 
 - DepotDownloader **3.4.0**, the self-contained release (no .NET install), pinned with SHA-256 in `versions/depotdownloader.toml`; downloaded over HTTPS to `<data>/tools/`, refused and deleted on a mismatch.
 - Arguments: `-app 2694490 -depot A -manifest MA -depot B -manifest MB -username U [-remember-password] [-no-mobile] -dir DIR [-validate]`. `-remember-password` only if the box is ticked; there is never a `-password`.
 - The runner reads output as raw chunks (the prompts have no line end), recognises `Enter account password for ...` (answered from the form), `STEAM GUARD! ...` (device or email code: the UI asks, the code goes to stdin), parses `NN.NN% file` progress and `Downloading depot N`, and reports failures (`Failed to authenticate...`).
-- Verification (`verify.rs`): file count and size floors, key files with exact sizes, SHA-256 of `PathOfExileSteam.exe`. The reference numbers in the version file were measured on the GameFiles copy in Poe2ModdingProject, not on a launcher download: they are unconfirmed until a first real install (a checksum mismatch is a warning until `exe_sha256_enforce = true`).
+- Verification (`verify.rs`): file count and size floors, key files with exact sizes, SHA-256 of `PathOfExileSteam.exe`. The reference numbers in the version file were measured on the GameFiles copy in Poe2ModdingProject, not on a launcher download: they are unconfirmed until a first real install (a checksum mismatch is a warning until `[exe] sha256_enforce = true`).
 
 ## Play
 
