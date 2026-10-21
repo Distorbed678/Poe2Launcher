@@ -132,7 +132,7 @@ fn env() -> Env {
 async fn profiles_login_logout_and_register() {
     let (url, mock) = spawn_mock().await;
     let e = env();
-    let p = e.core.add_profile("Mock", &url).unwrap();
+    let p = e.core.add_profile("Mock", &url, false).unwrap();
     assert!(!p.logged_in);
     assert_eq!(
         e.core.settings().unwrap().selected_profile.as_deref(),
@@ -216,12 +216,12 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 async fn logout_works_offline_and_changing_a_profile_url_drops_its_token() {
     let (url, _mock) = spawn_mock().await;
     let e = env();
-    let p = e.core.add_profile("Mock", &url).unwrap();
+    let p = e.core.add_profile("Mock", &url, false).unwrap();
     e.core.login(&p.id, "alice", "correct horse").await.unwrap();
     // Another address: the token must not be sent there.
     let moved = e
         .core
-        .update_profile(&p.id, "Mock", "http://127.0.0.1:9")
+        .update_profile(&p.id, "Mock", "http://127.0.0.1:9", false)
         .unwrap();
     assert!(!moved.logged_in && e.tokens.is_empty());
 
@@ -236,6 +236,7 @@ async fn logout_works_offline_and_changing_a_profile_url_drops_its_token() {
                 token: LAUNCHER_TOKEN.into(),
                 account: "Alice".into(),
                 expires_at: i64::MAX,
+                role: None,
             },
         )
         .unwrap();
@@ -256,7 +257,10 @@ async fn logout_works_offline_and_changing_a_profile_url_drops_its_token() {
 #[tokio::test]
 async fn expired_tokens_do_not_count_as_logged_in() {
     let e = env();
-    let p = e.core.add_profile("Mock", "http://127.0.0.1:9").unwrap();
+    let p = e
+        .core
+        .add_profile("Mock", "http://127.0.0.1:9", false)
+        .unwrap();
     e.tokens
         .set(
             &p.id,
@@ -264,6 +268,7 @@ async fn expired_tokens_do_not_count_as_logged_in() {
                 token: LAUNCHER_TOKEN.into(),
                 account: "Alice".into(),
                 expires_at: 1,
+                role: None,
             },
         )
         .unwrap();
@@ -329,7 +334,7 @@ async fn play_prepares_everything_and_starts_proton() {
             ..Settings::default()
         })
         .unwrap();
-    let p = e.core.add_profile("Mock", &url).unwrap();
+    let p = e.core.add_profile("Mock", &url, false).unwrap();
 
     // Not logged in: refused with a pointer to the Account page.
     let err = e.core.play(&p.id).await.unwrap_err().to_string();
@@ -429,7 +434,7 @@ async fn real_server_roundtrip_when_configured() {
         return;
     };
     let e = env();
-    let p = e.core.add_profile("Real", &url).unwrap();
+    let p = e.core.add_profile("Real", &url, false).unwrap();
     let info = e.core.server_info(&p.id).await.unwrap();
     println!("server: {info:?}");
     assert!(
@@ -476,6 +481,7 @@ fn real_keyring_roundtrip() {
         token: "cd".repeat(32),
         account: "alice".into(),
         expires_at: 4_102_444_800,
+        role: None,
     };
     assert!(store.get(&id).unwrap().is_none());
     store.set(&id, &s).unwrap();

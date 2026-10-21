@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  AccountInfo, AppInfo, InstallRequest, InstallStatus, InstalledMod, InstalledNew, LogoutResult,
-  PlayState, ProfileView, ServerInfo, Settings, VerifyReport,
+  AccountInfo, AppInfo, HostSettings, HostStatus, InstallOutcome, InstallRequest, InstallStatus, InstalledMod,
+  InstalledNew, LogoutResult, PlayState, ProfileView, ServerInfo, ServerRelease, Settings, SetupRequest,
+  SetupResult, VerifyReport,
 } from './types';
 
 /** An error from the backend: always carries a readable message. */
@@ -29,9 +30,17 @@ export async function call<T>(cmd: string, args?: Record<string, unknown>): Prom
 export const ipc = {
   appInfo: () => call<AppInfo>('app_info'),
   profiles: () => call<ProfileView[]>('profiles_list'),
-  profileAdd: (name: string, url: string) => call<ProfileView>('profile_add', { name, url }),
-  profileUpdate: (id: string, name: string, url: string) => call<ProfileView>('profile_update', { id, name, url }),
+  profileAdd: (name: string, url: string, confirmPlainHttp = false) =>
+    call<ProfileView>('profile_add', { name, url, confirmPlainHttp }),
+  profileUpdate: (id: string, name: string, url: string, confirmPlainHttp = false) =>
+    call<ProfileView>('profile_update', { id, name, url, confirmPlainHttp }),
   profileRemove: (id: string) => call<void>('profile_remove', { id }),
+  /** Agree (or withdraw) to send the password and token over plain http to this profile's address. */
+  confirmPlainHttp: (id: string, ok: boolean) => call<ProfileView>('profile_confirm_plain_http', { id, ok }),
+  /** Re-reads the account's role from the server (`GET /me`). */
+  accountRefresh: (id: string) => call<ProfileView>('account_refresh', { id }),
+  /** Admin only: opens the server's web admin in the system browser, already signed in. */
+  webAdminOpen: (id: string) => call<void>('web_admin_open', { id }),
   serverInfo: (id: string) => call<ServerInfo>('server_info', { id }),
   login: (id: string, username: string, password: string) => call<ProfileView>('account_login', { id, username, password }),
   register: (id: string, username: string, password: string) => call<AccountInfo>('account_register', { id, username, password }),
@@ -53,4 +62,16 @@ export const ipc = {
   modsDir: () => call<string>('mods_dir'),
   play: (profileId: string) => call<void>('play', { profileId }),
   playState: () => call<PlayState>('play_state'),
+  hostStatus: () => call<HostStatus>('host_status'),
+  hostFindRelease: () => call<ServerRelease>('host_find_release'),
+  hostInstallLatest: () => call<InstallOutcome>('host_install_latest'),
+  hostInstallLocal: (path: string) => call<InstallOutcome>('host_install_local', { path }),
+  hostLanIp: () => call<string | null>('host_lan_ip'),
+  hostPublicIp: () => call<string>('host_public_ip'),
+  hostSetup: (request: SetupRequest) => call<SetupResult>('host_setup', { request }),
+  hostStart: () => call<void>('host_start'),
+  hostStop: () => call<void>('host_stop'),
+  hostLogTail: (lines: number) => call<string[]>('host_log_tail', { lines }),
+  hostOpenGuide: () => call<void>('host_open_guide'),
+  hostSetAutostart: (on: boolean) => call<HostSettings>('host_set_autostart', { on }),
 };

@@ -5,10 +5,13 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::State;
+use tauri_plugin_opener::OpenerExt;
 
 use crate::{
     api::{AccountInfo, ServerInfo},
-    core::{Core, InstallRequest, InstallStatus, LogoutResult, PlayState, ProfileView},
+    core::{Core, InstallRequest, InstallStatus, LogoutResult, PlayState, ProfileView, UrlOpener},
+    host::{HostSettings, ServerRelease},
+    host_ops::{HostStatus, InstallOutcome, SetupRequest, SetupResult},
     mods::{InstalledMod, InstalledNew},
     settings::Settings,
     verify::VerifyReport,
@@ -47,13 +50,31 @@ pub fn profiles_list(app: App<'_>) -> Res<Vec<ProfileView>> {
 }
 
 #[tauri::command]
-pub fn profile_add(app: App<'_>, name: String, url: String) -> Res<ProfileView> {
-    app.add_profile(&name, &url).map_err(err)
+pub fn profile_add(
+    app: App<'_>,
+    name: String,
+    url: String,
+    confirm_plain_http: bool,
+) -> Res<ProfileView> {
+    app.add_profile(&name, &url, confirm_plain_http)
+        .map_err(err)
 }
 
 #[tauri::command]
-pub fn profile_update(app: App<'_>, id: String, name: String, url: String) -> Res<ProfileView> {
-    app.update_profile(&id, &name, &url).map_err(err)
+pub fn profile_update(
+    app: App<'_>,
+    id: String,
+    name: String,
+    url: String,
+    confirm_plain_http: bool,
+) -> Res<ProfileView> {
+    app.update_profile(&id, &name, &url, confirm_plain_http)
+        .map_err(err)
+}
+
+#[tauri::command]
+pub fn profile_confirm_plain_http(app: App<'_>, id: String, ok: bool) -> Res<ProfileView> {
+    app.set_plain_http_confirmed(&id, ok).map_err(err)
 }
 
 #[tauri::command]
@@ -89,6 +110,31 @@ pub async fn account_register(
 #[tauri::command]
 pub async fn account_logout(app: App<'_>, id: String) -> Res<LogoutResult> {
     app.logout(&id).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn account_refresh(app: App<'_>, id: String) -> Res<ProfileView> {
+    app.refresh_account(&id).await.map_err(err)
+}
+
+/// Hands the sign-in link to the system browser (Tauri opener).
+struct TauriOpener(tauri::AppHandle);
+
+impl UrlOpener for TauriOpener {
+    fn open(&self, url: &str) -> anyhow::Result<()> {
+        self.0
+            .opener()
+            .open_url(url, None::<&str>)
+            .map_err(|e| anyhow::anyhow!("{e}"))
+    }
+}
+
+/// "Open web admin": admin check, single-use web token, then the system browser.
+#[tauri::command]
+pub async fn web_admin_open(app: App<'_>, handle: tauri::AppHandle, id: String) -> Res<()> {
+    app.web_admin_open(&id, &TauriOpener(handle))
+        .await
+        .map_err(err)
 }
 
 #[tauri::command]
@@ -174,4 +220,69 @@ pub async fn play(app: App<'_>, profile_id: String) -> Res<()> {
 #[tauri::command]
 pub fn play_state(app: App<'_>) -> PlayState {
     app.play_state()
+}
+
+// --- Host a server ------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn host_status(app: App<'_>) -> Res<HostStatus> {
+    app.host_status().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn host_find_release(app: App<'_>) -> Res<ServerRelease> {
+    app.host_find_release().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn host_install_latest(app: App<'_>) -> Res<InstallOutcome> {
+    app.host_install_latest().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn host_install_local(app: App<'_>, path: String) -> Res<InstallOutcome> {
+    app.host_install_local(&path).await.map_err(err)
+}
+
+#[tauri::command]
+pub fn host_lan_ip(app: App<'_>) -> Option<String> {
+    app.host_lan_ip()
+}
+
+#[tauri::command]
+pub async fn host_public_ip(app: App<'_>) -> Res<String> {
+    app.host_public_ip().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn host_setup(app: App<'_>, request: SetupRequest) -> Res<SetupResult> {
+    app.host_setup(request).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn host_start(app: App<'_>) -> Res<()> {
+    app.host_start().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn host_stop(app: App<'_>) -> Res<()> {
+    app.host_stop().await.map_err(err)
+}
+
+#[tauri::command]
+pub fn host_log_tail(app: App<'_>, lines: usize) -> Vec<String> {
+    app.host_log_tail(lines)
+}
+
+#[tauri::command]
+pub fn host_set_autostart(app: App<'_>, on: bool) -> Res<HostSettings> {
+    app.host_set_autostart(on).map_err(err)
+}
+
+/// Opens the hosting guide (a fixed address) in the system browser.
+#[tauri::command]
+pub fn host_open_guide(handle: tauri::AppHandle) -> Res<()> {
+    TauriOpener(handle)
+        .open(crate::host::HOSTING_GUIDE_URL)
+        .map_err(err)
 }

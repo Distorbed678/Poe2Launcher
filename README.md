@@ -6,9 +6,10 @@ Tauri 2 (Rust backend in `src-tauri/`) with a Svelte 5 + Vite + TypeScript UI (`
 
 | Page | Does |
 |---|---|
-| Servers | profiles: a name and the cluster's web API address; *Check* shows `GET /server` (realm, version, players online, whether registration is open) |
-| Account | log in (`POST /api/v1/login`, kind `launcher`), create an account (`POST /register`), log out (`POST /logout` revokes the token). The token lives in the OS keyring only |
+| Servers | profiles: a name and the cluster's web API address; *Check* shows `GET /server` (realm, version, players online, whether registration is open) and refreshes the account's role. A plain `http://` address to another machine asks for a confirmation first (see Security). An admin sees *Open web admin* |
+| Account | log in (`POST /api/v1/login`, kind `launcher`), create an account (`POST /register`), log out (`POST /logout` revokes the token). The token lives in the OS keyring only. Shows the role; admins get *Open web admin* |
 | Install | downloads client 0.5.5e from Steam depots with the player's own Steam login, then verifies it |
+| Host a server | download the matching `poe-server` release (SHA-256 checked) or pick a local package, set it up (name, ports, public host, registration, admin account), start and stop it with a streamed log, optional autostart; the server is added to Servers |
 | Mods | list, add from a folder or zip, enable/disable, load order, compatibility check |
 | Settings | install dir, hook DLL dir, Proton (Linux), Steam download options, theme, launcher updates (check, release notes, download + verify + restart) |
 | Play (footer) | deploys the hook, writes the auto-login token, starts the game, shows the status |
@@ -20,7 +21,7 @@ The full guide (set-up, first run, troubleshooting) is `docs/guides/launcher.md`
 The hook deploy library is a nested submodule, like Poe2ClientHook nests Poe2Protocol, so a recursive clone builds with no git tricks in cargo:
 
 ```sh
-git clone --recursive https://github.com/Distorbed678/Poe2Launcher.git      # private: needs access to the three repos
+git clone --recursive https://github.com/Distorbed678/Poe2Launcher.git      # pulls Poe2ClientHook and Poe2Protocol too
 cd Poe2Launcher
 npm ci
 npm run tauri dev                  # development window (Vite on :1420)
@@ -38,7 +39,10 @@ src/                 Svelte UI: App.svelte (shell + Play bar), pages/, lib/ (ipc
 src-tauri/src/
   core.rs            service layer (everything the UI can do; no Tauri types, testable)
   commands.rs        thin #[tauri::command] wrappers; lib.rs wires events to the window
-  api.rs             web API client (reqwest, rustls)
+  api.rs             web API client (reqwest, rustls), incl. GET /me and POST /web-token
+  host.rs            Host a server, pure parts: settings (host.json), release lookup (GitHub), checksum, package check and extraction, server.toml from server.example.toml, LAN/public IP, port check
+  host_run.rs        the poe-server process: start/stop, streamed log ring buffer, one-shot commands
+  host_ops.rs        Host a server on Core: install (download or local), setup (config + admin account), start/stop/status
   profiles.rs        server profiles (profiles.json, no secrets)
   keystore.rs        TokenStore: KeyringStore (keyring crate) / MemoryStore (tests)
   settings.rs        settings.json
@@ -63,6 +67,9 @@ client-hook/         submodule: Poe2ClientHook (poe-hook-deploy used as a path d
 | Launcher token (+ account name, expiry) | OS keyring: service `poe2-launcher`, user = profile id (Secret Service / Credential Manager / Keychain). **Never a file** |
 | Profiles, settings | `<config>/poe2-launcher/profiles.json`, `settings.json` (`~/.config/...`, `%APPDATA%\...`) |
 | DepotDownloader, game, Proton prefix, logs | `<data>/poe2-launcher/{tools,game/<version>,proton-prefix,logs,crash-dumps}` |
+| Server settings (name, ports, public host, admin name; no secrets) | `<config>/poe2-launcher/host.json` |
+| Server package, database, log | `<data>/poe2-launcher/server/{packages,downloads,data,server.log}` (the database is outside the package, so an update keeps accounts and characters) |
+| Admin password (Host a server) | typed in the UI, sent once over the loopback web API of a private start of the server (`POST /register`) and wiped. Not stored, not in a file, not on a command line |
 | Steam password | typed in the UI, written once to DepotDownloader's stdin when it asks, wiped. Not stored, not on a command line |
 
 `POE2_LAUNCHER_HOME=<dir>` puts config and data under `<dir>/config` and `<dir>/data` (tests, portable use).
@@ -104,8 +111,9 @@ The launcher validates `mod.toml` (all rules of the spec, every problem listed),
 
 ```sh
 npm run check && npm test                 # svelte-check + tsc, vitest
-cd src-tauri && cargo test                # unit tests + tests/core_flow.rs (mock server, mock keyring, fake Proton)
+cd src-tauri && cargo test                # unit tests + tests/core_flow.rs (mock server, mock keyring, fake Proton), tests/web_admin.rs (Open web admin, plain-http guard) and tests/host_flow.rs (mock GitHub API, fake packages)
 cargo test --test fetch_tool -- --ignored          # downloads the pinned DepotDownloader, runs `-V` (never logs in)
+cargo test --test host_flow real_package -- --ignored --nocapture   # a REAL server package: install, set up, start, status, log, stop (needs POE2_TEST_SERVER_PACKAGE and POE2_TEST_GAME_DIR, see the test's comment)
 cargo test --test core_flow real_keyring -- --ignored   # needs an unlocked system keyring
 POE_LAUNCHER_TEST_URL=http://127.0.0.1:18080 POE_LAUNCHER_TEST_USER=u POE_LAUNCHER_TEST_PASS=p \
   cargo test --test core_flow real_server -- --nocapture   # against a real poe-server
@@ -121,10 +129,24 @@ The launcher updates itself with the Tauri updater plugin (`tauri-plugin-updater
 
 ## Commands the UI invokes
 
-`app_info`, `profiles_list`, `profile_add`, `profile_update`, `profile_remove`, `server_info`, `account_login`, `account_register`, `account_logout`, `settings_get`, `settings_set`, `install_status`, `install_start`, `install_input`, `install_cancel`, `install_verify`, `mods_list`, `mod_install`, `mod_enable`, `mod_disable`, `mod_move`, `mod_auto_order`, `mod_remove`, `mods_dir`, `play`, `play_state`. Arguments are camelCase from JS (`profileId`, `overrideCompat`); errors are readable strings.
+`app_info`, `profiles_list`, `profile_add`, `profile_update`, `profile_remove`, `profile_confirm_plain_http`, `server_info`, `account_login`, `account_register`, `account_logout`, `account_refresh`, `web_admin_open`, `settings_get`, `settings_set`, `install_status`, `install_start`, `install_input`, `install_cancel`, `install_verify`, `mods_list`, `mod_install`, `mod_enable`, `mod_disable`, `mod_move`, `mod_auto_order`, `mod_remove`, `mods_dir`, `play`, `play_state`, and for hosting `host_status`, `host_find_release`, `host_install_latest`, `host_install_local`, `host_lan_ip`, `host_public_ip`, `host_setup`, `host_start`, `host_stop`, `host_log_tail`, `host_set_autostart`, `host_open_guide`. Arguments are camelCase from JS (`profileId`, `overrideCompat`); errors are readable strings.
 
-Events: `install:state` (`fetching_tool`, `downloading`, `verifying`, `done`, `failed`, `cancelled`), `install:log`, `install:progress`, `install:prompt` (Steam Guard), `install:verify`, `play:status` (`idle`, `preparing`, `running`, `exited`), `play:warning`.
+Events: `install:state` (`fetching_tool`, `downloading`, `verifying`, `done`, `failed`, `cancelled`), `install:log`, `install:progress`, `install:prompt` (Steam Guard), `install:verify`, `play:status` (`idle`, `preparing`, `running`, `exited`), `play:warning`, and for hosting `host:status` (`stopped`, `running`, `stopping`, `exited`), `host:log`, `host:progress`, `host:setup` (step text), `host:installed`.
+
+## Security
+
+- Passwords and tokens: the keyring only; `Debug` output redacts them; the Steam password and the server admin password never touch a command line or a file.
+- **Plain `http://`** (audit S-03): to an address that is not this computer, the launcher sends nothing (no login, no registration, no token for Play or the web admin) until you confirm that address on the Servers or Account page; the confirmation is per address and withdrawn when the address changes. A bare `host:port` gets `https://` unless it is this computer or a local network.
+- **Open web admin** (admins only): `GET /me` for the role, `POST /web-token` for a single-use token, then `<server address>/#/token-login?t=<token>` in the system browser (Tauri opener). The link is checked to be exactly that form before it is opened and is never logged. See `docs/architecture/web-api.md` in Poe2ModdingProject.
+- Server packages are verified against their `.sha256` file; archives are unpacked with path, link and size checks.
+- Reporting a vulnerability: [SECURITY.md](SECURITY.md).
+
+## Disclaimer
+
+This is an unofficial, fan-made project for personal and educational use. It is **not affiliated with, endorsed by or connected to Grinding Gear Games**; "Path of Exile" is their trademark. **No game files are distributed** in this repository or by the launcher's own releases: the Install page downloads the game from Steam with *your* Steam account, so you need your own legal copy. Use is at your own risk. The client hook that the launcher deploys can be detected as a modification by anti-cheat software. It is for the private server only: the launcher always deploys private mode, and use on official servers is limited to read-only observation by developers (not supported, not recommended).
+
+Contributing: [CONTRIBUTING.md](https://github.com/Distorbed678/Poe2ModdingProject/blob/main/CONTRIBUTING.md) in the main repository (checks for this repo: `npm run check`, `npm test`, `npm run build`, and in `src-tauri` `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`).
 
 ## Licence
 
-MIT OR Apache-2.0, like the other repos of the project.
+MIT OR Apache-2.0, at your option: [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE). Copyright (c) 2026 Distorbed678 and contributors.

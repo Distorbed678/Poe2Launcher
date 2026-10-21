@@ -41,12 +41,22 @@ zeroize = "1"
 # (client-hook/, which nests Poe2Protocol) so that a recursive clone builds without git auth
 # gymnastics in cargo.
 poe-hook-deploy = { path = "../client-hook/poe-hook-deploy" }
+# "Host a server": the package is a .tar.gz (Linux) or .zip (Windows); the server config is
+# patched in place (comments kept); a polite SIGTERM stops the server on Unix.
+toml_edit = "0.25"
+flate2 = "1"
+tar = "0.4"
 
 # Self-update of the launcher: signed releases from GitHub (tauri.conf.json, plugins.updater).
 # Desktop only; the updater works on an AppImage (Linux) and the NSIS install (Windows).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# "Open web admin": hands the sign-in link to the system browser.
+tauri-plugin-opener = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

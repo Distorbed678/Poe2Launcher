@@ -1,5 +1,8 @@
 // Mirrors the Rust views in src-tauri/src (serde, snake_case).
 
+/** How exposed a server address is: https, or plain http to this computer / a local network / elsewhere. */
+export type PlainHttp = 'https' | 'loopback' | 'private' | 'public';
+
 export interface ProfileView {
   id: string;
   name: string;
@@ -7,6 +10,11 @@ export interface ProfileView {
   logged_in: boolean;
   account: string | null;
   expires_at: number | null;
+  /** `player` or `admin`, as of the last login or refresh. */
+  role: string | null;
+  plain_http: PlainHttp;
+  /** The user agreed to send the password and token in clear text to this address. */
+  plain_http_confirmed: boolean;
   keyring_error: string | null;
 }
 
@@ -141,3 +149,84 @@ export interface AppInfo {
 }
 
 export type PromptKind = 'password' | 'guard_device' | 'guard_email';
+
+// --- Host a server (src-tauri/src/host.rs, host_ops.rs, host_run.rs) ---
+
+export interface HostSettings {
+  server_name: string;
+  cluster_id: string;
+  login_port: number;
+  instance_port: number;
+  web_port: number;
+  public_host: string;
+  web_public: boolean;
+  open_registration: boolean;
+  admin_name: string;
+  autostart: boolean;
+  package_dir: string | null;
+  configured: boolean;
+  profile_id: string | null;
+}
+
+export interface PackageInfo {
+  dir: string;
+  name: string;
+  server_version: string;
+  game_version: string;
+  platform: string;
+  commit: string;
+}
+
+export type RunState =
+  | { state: 'stopped' }
+  | { state: 'running'; pid: number }
+  | { state: 'stopping'; pid: number }
+  | { state: 'exited'; code: number | null };
+
+export interface HostStatus {
+  settings: HostSettings;
+  package: PackageInfo | null;
+  package_problem: string | null;
+  platform: string;
+  game_version: string;
+  game_installed: boolean;
+  install_dir: string;
+  run: RunState;
+  /** The web API answers (the server is ready). */
+  info: ServerInfo | null;
+  web_url: string;
+  lan_ip: string | null;
+  log_file: string;
+  busy: boolean;
+  hosting_guide_url: string;
+}
+
+export interface ServerRelease {
+  tag: string;
+  version: string;
+  game_version: string;
+  prerelease: boolean;
+  asset_name: string;
+  asset_url: string;
+  size: number;
+  sha256_url: string;
+}
+
+export interface InstallOutcome {
+  package: PackageInfo;
+  sha256: string | null;
+  checksum_verified: boolean;
+  source: 'download' | 'file' | 'folder' | 'current';
+}
+
+export interface SetupRequest {
+  settings: HostSettings;
+  /** Typed in the UI, used once for the admin account, never stored. */
+  admin_password: string;
+}
+
+export interface SetupResult {
+  profile: ProfileView;
+  admin_existed: boolean;
+  config_file: string;
+}

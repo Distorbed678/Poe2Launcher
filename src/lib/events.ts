@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { InstallEvent } from './install';
-import type { PlayState, VerifyReport } from './types';
+import type { PlayState, RunState, VerifyReport } from './types';
 import type { Phase } from './install';
 import type { PromptKind } from './types';
 
@@ -32,6 +32,30 @@ export async function listenPlay(
   const subs = await Promise.all([
     listen<PlayState>('play:status', (e) => onState(e.payload)),
     listen<{ text: string }>('play:warning', (e) => onWarning(e.payload.text)),
+  ]);
+  return () => subs.forEach((u) => u());
+}
+
+export interface HostProgress {
+  phase: string;
+  done: number;
+  total: number;
+}
+
+/** The hosted server's events: run state, log lines, download progress, setup steps, a new package. */
+export async function listenHost(h: {
+  onState: Handler<RunState>;
+  onLog: Handler<string>;
+  onProgress: Handler<HostProgress>;
+  onStep: Handler<string>;
+  onInstalled: Handler<void>;
+}): Promise<UnlistenFn> {
+  const subs = await Promise.all([
+    listen<RunState>('host:status', (e) => h.onState(e.payload)),
+    listen<{ line: string }>('host:log', (e) => h.onLog(e.payload.line)),
+    listen<HostProgress>('host:progress', (e) => h.onProgress(e.payload)),
+    listen<{ step: string }>('host:setup', (e) => h.onStep(e.payload.step)),
+    listen<unknown>('host:installed', () => h.onInstalled()),
   ]);
   return () => subs.forEach((u) => u());
 }

@@ -19,6 +19,9 @@ pub struct StoredSession {
     pub account: String,
     /// Unix seconds.
     pub expires_at: i64,
+    /// `player` or `admin`, from the login and refreshed with `GET /me`. Old entries have none.
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 impl std::fmt::Debug for StoredSession {
@@ -27,6 +30,7 @@ impl std::fmt::Debug for StoredSession {
             .field("token", &"<redacted>")
             .field("account", &self.account)
             .field("expires_at", &self.expires_at)
+            .field("role", &self.role)
             .finish()
     }
 }
@@ -147,6 +151,7 @@ mod tests {
             token: t.repeat(64),
             account: "alice".into(),
             expires_at: 1_900_000_000,
+            role: None,
         }
     }
 

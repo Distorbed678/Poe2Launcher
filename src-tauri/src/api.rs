@@ -1,7 +1,7 @@
 //! Client for the server's web API (`docs/architecture/web-api.md` in Poe2ModdingProject).
 //!
 //! Only the endpoints the launcher uses: `GET /server`, `POST /register`, `POST /login` (kind
-//! `launcher`), `POST /logout` and `POST /game-token`.
+//! `launcher`), `POST /logout`, `POST /game-token`, `GET /me` and `POST /web-token`.
 
 use std::time::Duration;
 
@@ -71,6 +71,25 @@ impl std::fmt::Debug for TokenResponse {
     }
 }
 
+/// `POST /web-token`: a single-use sign-in token for the web admin.
+#[derive(Clone, Deserialize)]
+pub struct WebTokenResponse {
+    pub token: String,
+    pub expires_in_secs: u64,
+    /// `/#/token-login?t=<token>`: appended to the server's web address.
+    pub login_path: String,
+}
+
+impl std::fmt::Debug for WebTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebTokenResponse")
+            .field("token", &"<redacted>")
+            .field("expires_in_secs", &self.expires_in_secs)
+            .field("login_path", &"<redacted>")
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct ApiClient {
     http: reqwest::Client,
@@ -128,6 +147,30 @@ impl ApiClient {
             .send()
             .await;
         decode_empty(res).await
+    }
+
+    /// The account the token belongs to, with its current role.
+    pub async fn me(&self, token: &str) -> Result<AccountInfo, ApiError> {
+        decode(
+            self.http
+                .get(self.url("/me"))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Exchanges the launcher token of an admin for a single-use web sign-in token.
+    pub async fn web_token(&self, token: &str) -> Result<WebTokenResponse, ApiError> {
+        decode(
+            self.http
+                .post(self.url("/web-token"))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
     }
 
     /// Exchanges the launcher token for a one-off `game_remember` token for the client's
@@ -202,6 +245,16 @@ mod tests {
             },
         };
         assert!(!format!("{r:?}").contains(&"ab".repeat(32)));
+    }
+
+    #[test]
+    fn web_tokens_are_not_printed() {
+        let w = WebTokenResponse {
+            token: "cd".repeat(32),
+            expires_in_secs: 60,
+            login_path: format!("/#/token-login?t={}", "cd".repeat(32)),
+        };
+        assert!(!format!("{w:?}").contains("cdcd"));
     }
 
     #[test]

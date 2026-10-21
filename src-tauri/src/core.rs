@@ -15,11 +15,12 @@ use tokio::sync::{mpsc, watch};
 use crate::{
     api::{AccountInfo, ApiClient, ApiError, ServerInfo},
     depot::{self, DepotEvent, DownloadJob, Outcome, Secret, ToolPin},
+    host_run::HostRuntime,
     keystore::{StoredSession, TokenStore},
     mods::{InstalledMod, InstalledNew, ModStore},
     paths::{Dirs, reject_steam_paths},
     play::{self, PlayConfig},
-    profiles::{Profile, ProfileStore},
+    profiles::{PlainHttp, Profile, ProfileStore, needs_plain_http_confirmation, plain_http},
     settings::Settings,
     verify::{self, VerifyReport},
     version::VersionFile,
@@ -51,6 +52,11 @@ pub fn now_secs() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
+/// Hands a link to the system browser (the Tauri opener in the app, a recorder in tests).
+pub trait UrlOpener: Send + Sync {
+    fn open(&self, url: &str) -> Result<()>;
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ProfileView {
     pub id: String,
@@ -59,6 +65,13 @@ pub struct ProfileView {
     pub logged_in: bool,
     pub account: Option<String>,
     pub expires_at: Option<i64>,
+    /// `player` or `admin` as of the last login or refresh; the UI offers "Open web admin"
+    /// only for `admin`.
+    pub role: Option<String>,
+    /// How exposed the address is: `https`, or plain http to `loopback`, `private` or `public`.
+    pub plain_http: PlainHttp,
+    /// The user confirmed sending the password and token in clear text to this address.
+    pub plain_http_confirmed: bool,
     /// The keyring could not be read (shown instead of a silent "logged out").
     pub keyring_error: Option<String>,
 }
@@ -133,6 +146,10 @@ pub struct Core {
     pub version: VersionFile,
     install: Mutex<Option<InstallControl>>,
     play: Mutex<PlayState>,
+    /// The hosted `poe-server` process (see `host_ops.rs`).
+    pub host: HostRuntime,
+    /// Set while the host page downloads, installs or sets up: one such job at a time.
+    pub(crate) host_busy: Mutex<bool>,
 }
 
 impl Core {
@@ -148,10 +165,12 @@ impl Core {
             version: VersionFile::latest()?,
             install: Mutex::new(None),
             play: Mutex::new(PlayState::Idle),
+            host: HostRuntime::new(),
+            host_busy: Mutex::new(false),
         }))
     }
 
-    fn emit(&self, event: &str, payload: serde_json::Value) {
+    pub(crate) fn emit(&self, event: &str, payload: serde_json::Value) {
         self.events.emit(event, payload);
     }
 
@@ -191,6 +210,9 @@ impl Core {
             logged_in: live.is_some(),
             account: session.as_ref().map(|s| s.account.clone()),
             expires_at: session.as_ref().map(|s| s.expires_at),
+            role: live.and_then(|s| s.role.clone()),
+            plain_http: plain_http(&p.url).unwrap_or(PlainHttp::Https),
+            plain_http_confirmed: p.plain_http_ok,
             keyring_error: err,
             id: p.id,
             name: p.name,
@@ -207,8 +229,17 @@ impl Core {
             .collect())
     }
 
-    pub fn add_profile(&self, name: &str, url: &str) -> Result<ProfileView> {
-        let p = self.profile_store().add(name, url)?;
+    /// `confirm_plain_http`: the user saw the warning for a plain `http://` address and agreed.
+    pub fn add_profile(
+        &self,
+        name: &str,
+        url: &str,
+        confirm_plain_http: bool,
+    ) -> Result<ProfileView> {
+        let mut p = self.profile_store().add(name, url)?;
+        if confirm_plain_http && needs_plain_http_confirmation(&p.url) {
+            p = self.profile_store().set_plain_http_ok(&p.id, true)?;
+        }
         let mut s = self.settings()?;
         if s.selected_profile.is_none() {
             s.selected_profile = Some(p.id.clone());
@@ -217,14 +248,29 @@ impl Core {
         Ok(self.view(p))
     }
 
-    pub fn update_profile(&self, id: &str, name: &str, url: &str) -> Result<ProfileView> {
+    pub fn update_profile(
+        &self,
+        id: &str,
+        name: &str,
+        url: &str,
+        confirm_plain_http: bool,
+    ) -> Result<ProfileView> {
         let before = self.profile_store().get(id)?;
-        let p = self.profile_store().update(id, name, url)?;
+        let mut p = self.profile_store().update(id, name, url)?;
         if before.url != p.url {
             // The token belongs to the old server: do not send it to another one.
             self.tokens.delete(id)?;
         }
+        if confirm_plain_http && needs_plain_http_confirmation(&p.url) && !p.plain_http_ok {
+            p = self.profile_store().set_plain_http_ok(id, true)?;
+        }
         Ok(self.view(p))
+    }
+
+    /// Records that the user agreed to send the password and token over plain `http://` to
+    /// this profile's address (or withdraws that).
+    pub fn set_plain_http_confirmed(&self, id: &str, ok: bool) -> Result<ProfileView> {
+        Ok(self.view(self.profile_store().set_plain_http_ok(id, ok)?))
     }
 
     /// Revokes the token on the server (best effort) and forgets profile and token.
@@ -252,6 +298,7 @@ impl Core {
 
     pub async fn login(&self, id: &str, username: &str, password: &str) -> Result<ProfileView> {
         let (p, c) = self.client_for(id)?;
+        require_secure(&p, "password")?;
         let r = c
             .login(username.trim(), password)
             .await
@@ -261,6 +308,7 @@ impl Core {
             token: r.token.clone(),
             account: r.account.username.clone(),
             expires_at: r.expires_at,
+            role: Some(r.account.role.clone()),
         };
         if let Err(e) = self.tokens.set(id, &stored) {
             let _ = c.logout(&r.token).await;
@@ -270,8 +318,79 @@ impl Core {
     }
 
     pub async fn register(&self, id: &str, username: &str, password: &str) -> Result<AccountInfo> {
-        let (_, c) = self.client_for(id)?;
+        let (p, c) = self.client_for(id)?;
+        require_secure(&p, "password")?;
         Ok(c.register(username.trim(), password).await?)
+    }
+
+    /// Asks the server who the stored token belongs to (`GET /me`) and keeps the role, so a
+    /// promotion or demotion shows without logging in again. A token the server no longer
+    /// accepts is forgotten, like in Play.
+    pub async fn refresh_account(&self, id: &str) -> Result<ProfileView> {
+        let (p, c) = self.client_for(id)?;
+        let Some(mut session) = self.tokens.get(id)?.filter(|s| s.expires_at > now_secs()) else {
+            return Ok(self.view(p));
+        };
+        require_secure(&p, "login token")?;
+        match c.me(&session.token).await {
+            Ok(me) => {
+                session.role = Some(me.role);
+                session.account = me.username;
+                self.tokens.set(id, &session)?;
+            }
+            Err(e) if e.is_unauthorized() => self.tokens.delete(id)?,
+            Err(e) => return Err(e.into()),
+        }
+        Ok(self.view(p))
+    }
+
+    /// The link that opens the server's web admin already signed in: checks the account is an
+    /// admin, trades the launcher token for a single-use web token and returns
+    /// `<server address>/#/token-login?t=<token>`. The result is a credential: do not log it.
+    pub async fn web_admin_link(&self, id: &str) -> Result<String> {
+        let (p, c) = self.client_for(id)?;
+        let mut session = self
+            .tokens
+            .get(id)?
+            .filter(|s| s.expires_at > now_secs())
+            .ok_or_else(|| anyhow!("log in to {} first (Account page)", p.name))?;
+        require_secure(&p, "login token")?;
+        let me = match c.me(&session.token).await {
+            Ok(me) => me,
+            Err(e) if e.is_unauthorized() => {
+                self.tokens.delete(id)?;
+                bail!("the server no longer accepts this login; log in again");
+            }
+            Err(e) => return Err(e.into()),
+        };
+        if session.role.as_deref() != Some(me.role.as_str()) {
+            session.role = Some(me.role.clone());
+            self.tokens.set(id, &session)?;
+        }
+        if me.role != "admin" {
+            bail!("{} is not an admin on {}", me.username, p.name);
+        }
+        let w = c.web_token(&session.token).await.map_err(|e| match e {
+            ApiError::Status { status: 403, .. } => anyhow!(
+                "the server refused to open the web admin for this login; log out and in again"
+            ),
+            ApiError::Status {
+                status: 404 | 405, ..
+            } => anyhow!(
+                "this server is too old for \"Open web admin\" (it has no sign-in link yet); \
+                 open its address in the browser and log in there"
+            ),
+            other => other.into(),
+        })?;
+        web_admin_url(&p.url, &w.login_path, &w.token)
+    }
+
+    /// [`Self::web_admin_link`] and then the system browser.
+    pub async fn web_admin_open(&self, id: &str, opener: &dyn UrlOpener) -> Result<()> {
+        let url = self.web_admin_link(id).await?;
+        opener
+            .open(&url)
+            .map_err(|e| anyhow!("could not open the browser: {e:#}"))
     }
 
     /// Revokes the launcher token on the server, then removes it from the keyring. The local
@@ -613,6 +732,7 @@ impl Core {
             );
         }
         let (profile, client) = self.client_for(profile_id)?;
+        require_secure(&profile, "login token")?;
         let session = self
             .tokens
             .get(profile_id)?
@@ -672,6 +792,31 @@ impl Core {
         });
         Ok(())
     }
+}
+
+/// S-03: a password or token must not go over plain `http://` to another machine unless the
+/// user agreed (the UI asks; this is the backstop). `what` names what would be sent.
+pub fn require_secure(p: &Profile, what: &str) -> Result<()> {
+    if needs_plain_http_confirmation(&p.url) && !p.plain_http_ok {
+        bail!(
+            "{} is reached over plain http://, so your {what} would travel unencrypted and \
+             could be read on the way. Confirm that on the Servers page first, or use an https:// address",
+            p.name
+        );
+    }
+    Ok(())
+}
+
+/// `base` + `login_path`, after checking the path is the sign-in route and carries exactly
+/// the token the server just issued (a hostile or broken server must not make the launcher
+/// open some other address).
+pub fn web_admin_url(base: &str, login_path: &str, token: &str) -> Result<String> {
+    let expected = format!("/#/token-login?t={token}");
+    if token.len() != 64 || !token.chars().all(|c| c.is_ascii_hexdigit()) || login_path != expected
+    {
+        bail!("the server's sign-in link is not in the expected form; it was not opened");
+    }
+    Ok(format!("{}{}", base.trim_end_matches('/'), login_path))
 }
 
 fn login_error(e: ApiError) -> anyhow::Error {

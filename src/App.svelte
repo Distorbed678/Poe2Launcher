@@ -10,12 +10,14 @@
   import Account from './pages/Account.svelte';
   import Install from './pages/Install.svelte';
   import Mods from './pages/Mods.svelte';
+  import Host from './pages/Host.svelte';
   import Settings from './pages/Settings.svelte';
 
   const nav = [
     { page: 'servers', label: 'Servers' },
     { page: 'account', label: 'Account' },
     { page: 'install', label: 'Install' },
+    { page: 'host', label: 'Host a server' },
     { page: 'mods', label: 'Mods' },
     { page: 'settings', label: 'Settings' },
   ];
@@ -63,6 +65,8 @@
       <Account />
     {:else if page === 'install'}
       <Install />
+    {:else if page === 'host'}
+      <Host />
     {:else if page === 'mods'}
       <Mods />
     {:else}

@@ -4,6 +4,8 @@
   import { run, toasts } from '../lib/notify.svelte';
   import { formatExpiry } from '../lib/format';
   import PageHead from '../lib/ui/PageHead.svelte';
+  import PlainHttpNotice from '../lib/ui/PlainHttpNotice.svelte';
+  import { isPlainHttpBlocked } from '../lib/url';
   import type { ServerInfo } from '../lib/types';
 
   let username = $state('');
@@ -15,6 +17,7 @@
   let infoError = $state('');
 
   const p = $derived(app.selected);
+  const blocked = $derived(p ? isPlainHttpBlocked(p) : false);
 
   // The server's registration switch decides whether the register tab is offered.
   $effect(() => {
@@ -80,16 +83,24 @@
     <dl class="kv">
       <dt>Account</dt><dd>{p.account}</dd>
       <dt>Server</dt><dd>{p.name} <span class="muted"><code>{p.url}</code></span></dd>
+      <dt>Role</dt><dd>{p.role ?? 'unknown'}</dd>
       <dt>Login valid</dt><dd>{formatExpiry(p.expires_at)}</dd>
     </dl>
+    <PlainHttpNotice profile={p} onchange={() => app.refreshProfiles()} />
     <p class="hint">
       The login token is kept in the system keyring, never in a file. Play signs the game in with it by itself.
     </p>
-    <div class="actions"><button class="danger" type="button" onclick={logout}>Log out</button></div>
+    <div class="actions">
+      {#if p.role === 'admin'}
+        <button type="button" onclick={() => app.openWebAdmin(p.id)} title="Opens the server's web admin in your browser, already signed in">Open web admin</button>
+      {/if}
+      <button class="danger" type="button" onclick={logout}>Log out</button>
+    </div>
   </section>
 {:else}
   <section class="card" style="max-width: 440px">
     {#if p.keyring_error}<p class="err">{p.keyring_error}</p>{/if}
+    <PlainHttpNotice profile={p} onchange={() => app.refreshProfiles()} />
     {#if p.account}<p class="notice">Your saved login for {p.account} has expired. Log in again.</p>{/if}
     {#if infoError}<p class="err">{infoError}</p>{/if}
     <div class="row" style="margin-bottom: 10px">
@@ -109,7 +120,7 @@
       <form onsubmit={login}>
         <label class="field"><span>Account name</span><input bind:value={username} autocomplete="username" /></label>
         <label class="field"><span>Password</span><input type="password" bind:value={password} autocomplete="current-password" /></label>
-        <div class="actions"><button class="primary" type="submit" disabled={busy || !username.trim() || !password}>Log in</button></div>
+        <div class="actions"><button class="primary" type="submit" disabled={busy || blocked || !username.trim() || !password}>Log in</button></div>
       </form>
     {:else}
       <form onsubmit={register}>
@@ -122,9 +133,9 @@
           <span>Repeat the password</span>
           <input type="password" bind:value={password2} autocomplete="new-password" aria-invalid={password2 !== '' && password !== password2} />
         </label>
-        <div class="actions"><button class="primary" type="submit" disabled={busy || !canRegister}>Create account</button></div>
+        <div class="actions"><button class="primary" type="submit" disabled={busy || blocked || !canRegister}>Create account</button></div>
       </form>
     {/if}
-    <p class="hint">The password goes to the server you chose (use https outside your own network).</p>
+    <p class="hint">The password goes to the server you chose{p.plain_http === 'https' ? ' over https.' : p.plain_http === 'loopback' ? ' on this computer.' : ' (use https outside your own network).'}</p>
   </section>
 {/if}
