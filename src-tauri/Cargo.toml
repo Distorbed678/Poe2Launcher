@@ -1,0 +1,53 @@
+[package]
+name = "poe2-launcher"
+version = "0.1.0"
+description = "Launcher for the PoE2 0.5.5e private server: server profiles, game install from Steam depots, hook deploy, mods"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+default-run = "poe2-launcher"
+
+# Own workspace root: this repo is nested inside Poe2ModdingProject (modules/launcher), whose
+# workspace excludes `modules/` and must not adopt this package.
+[workspace]
+
+[lib]
+name = "poe2_launcher_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+anyhow = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+futures-util = "0.3"
+keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust", "apple-native", "windows-native"] }
+sha2 = "0.10"
+hex = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+semver = "1"
+dirs = "6"
+fs4 = "0.13"
+zeroize = "1"
+# Deploy and launch logic shared with `cargo xtask` of Poe2ModdingProject. A nested submodule
+# (client-hook/, which nests Poe2Protocol) so that a recursive clone builds without git auth
+# gymnastics in cargo.
+poe-hook-deploy = { path = "../client-hook/poe-hook-deploy" }
+
+[dev-dependencies]
+tempfile = "3"
+axum = "0.8"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = "s"
+strip = true

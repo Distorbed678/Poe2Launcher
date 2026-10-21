@@ -1,0 +1,54 @@
+# Game client 0.5.5e (Steam app "Path of Exile 2").
+#
+# Both depots go into ONE directory, in this order: the later depot overwrites the earlier one
+# ("exe over content"). The launcher passes them to DepotDownloader in a single run, in file order,
+# so the player enters a Steam Guard code once.
+version = "0.5.5e"
+app_id = 2694490
+
+[[depots]]
+id = 2694491
+manifest = "7366357142270402355"
+role = "content"
+
+[[depots]]
+id = 2694492
+manifest = "246779027001700092"
+role = "windows exe"
+
+# What "verified" means (src-tauri/src/verify.rs). Every number below was measured on the
+# GameFiles copy of the 0.5.5e install in Poe2ModdingProject, NOT on a depot download made by
+# the launcher: the first real install must confirm them (the checks report which one failed,
+# and `exe_sha256_enforce = false` keeps a mismatch of the exe checksum a warning).
+[verify]
+exe = "PathOfExileSteam.exe"
+# SHA-256 of PathOfExileSteam.exe as installed by Steam (GameFiles copy). Leave out or set to
+# "TODO" if unknown: the check is then skipped and says so.
+exe_sha256 = "7157984534da1b146e9b0be342aa9fd24272915b6f478aadef9830fc7873f89f"
+# false: a mismatch is a warning (the value is unconfirmed against the depot). Set true once a
+# real depot install has matched.
+exe_sha256_enforce = false
+# Sanity floors (the GameFiles copy has 64783 files, 150.8 GB, without logs and hook files).
+min_files = 58000
+min_bytes = 130000000000
+
+# Files that must exist with exactly this size.
+[[verify.files]]
+path = "PathOfExileSteam.exe"
+size = 78335832
+
+[[verify.files]]
+path = "Bundles2/_.index.bin"
+size = 115154591
+
+[[verify.files]]
+path = "steam_api64.dll"
+size = 262944
+
+[[verify.files]]
+path = "fmod.dll"
+size = 1913344
+
+[[verify.files]]
+path = "bink2w64.dll"
+size = 466560

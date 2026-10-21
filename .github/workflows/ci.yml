@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Poe2ClientHook and its nested Poe2Protocol are private repos the default token cannot read.
+# Each gets its own read-only deploy key (repository secrets HOOK_DEPLOY_KEY and
+# PROTOCOL_DEPLOY_KEY; a deploy key can belong to one repository only).
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch submodules
+        env:
+          HOOK_KEY: ${{ secrets.HOOK_DEPLOY_KEY }}
+          PROTOCOL_KEY: ${{ secrets.PROTOCOL_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$HOOK_KEY" > ~/.ssh/hook_key
+          printf '%s\n' "$PROTOCOL_KEY" > ~/.ssh/protocol_key
+          chmod 600 ~/.ssh/hook_key ~/.ssh/protocol_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          cat >> ~/.ssh/config <<'CFG'
+          Host gh-hook
+            HostName github.com
+            User git
+            IdentityFile ~/.ssh/hook_key
+            IdentitiesOnly yes
+          Host gh-protocol
+            HostName github.com
+            User git
+            IdentityFile ~/.ssh/protocol_key
+            IdentitiesOnly yes
+          CFG
+          git config --global url."git@gh-hook:Distorbed678/Poe2ClientHook".insteadOf "https://github.com/Distorbed678/Poe2ClientHook"
+          git config --global url."git@gh-protocol:Distorbed678/Poe2Protocol".insteadOf "https://github.com/Distorbed678/Poe2Protocol"
+          git submodule update --init --recursive
+      - name: System libraries for Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+      - name: cargo fmt
+        run: cargo fmt --check
+        working-directory: src-tauri
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: src-tauri
+      - name: cargo test
+        run: cargo test
+        working-directory: src-tauri
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch submodules
+        env:
+          HOOK_KEY: ${{ secrets.HOOK_DEPLOY_KEY }}
+          PROTOCOL_KEY: ${{ secrets.PROTOCOL_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$HOOK_KEY" > ~/.ssh/hook_key
+          printf '%s\n' "$PROTOCOL_KEY" > ~/.ssh/protocol_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          cat >> ~/.ssh/config <<'CFG'
+          Host gh-hook
+            HostName github.com
+            User git
+            IdentityFile ~/.ssh/hook_key
+            IdentitiesOnly yes
+          Host gh-protocol
+            HostName github.com
+            User git
+            IdentityFile ~/.ssh/protocol_key
+            IdentitiesOnly yes
+          CFG
+          git config --global url."git@gh-hook:Distorbed678/Poe2ClientHook".insteadOf "https://github.com/Distorbed678/Poe2ClientHook"
+          git config --global url."git@gh-protocol:Distorbed678/Poe2Protocol".insteadOf "https://github.com/Distorbed678/Poe2Protocol"
+          git submodule update --init --recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm run build
+      - name: cargo check
+        run: cargo check --all-targets
+        working-directory: src-tauri
