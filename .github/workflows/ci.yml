@@ -8,9 +8,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# Poe2ClientHook and its nested Poe2Protocol are private repos the default token cannot read.
-# Each gets its own read-only deploy key (repository secrets HOOK_DEPLOY_KEY and
-# PROTOCOL_DEPLOY_KEY; a deploy key can belong to one repository only).
 defaults:
   run:
     shell: bash
@@ -20,31 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch submodules
-        env:
-          HOOK_KEY: ${{ secrets.HOOK_DEPLOY_KEY }}
-          PROTOCOL_KEY: ${{ secrets.PROTOCOL_DEPLOY_KEY }}
-        run: |
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$HOOK_KEY" > ~/.ssh/hook_key
-          printf '%s\n' "$PROTOCOL_KEY" > ~/.ssh/protocol_key
-          chmod 600 ~/.ssh/hook_key ~/.ssh/protocol_key
-          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
-          cat >> ~/.ssh/config <<'CFG'
-          Host gh-hook
-            HostName github.com
-            User git
-            IdentityFile ~/.ssh/hook_key
-            IdentitiesOnly yes
-          Host gh-protocol
-            HostName github.com
-            User git
-            IdentityFile ~/.ssh/protocol_key
-            IdentitiesOnly yes
-          CFG
-          git config --global url."git@gh-hook:Distorbed678/Poe2ClientHook".insteadOf "https://github.com/Distorbed678/Poe2ClientHook"
-          git config --global url."git@gh-protocol:Distorbed678/Poe2Protocol".insteadOf "https://github.com/Distorbed678/Poe2Protocol"
-          git submodule update --init --recursive
+        with:
+          # client-hook and its nested protocol (public repositories).
+          submodules: recursive
       - name: System libraries for Tauri
         run: |
           sudo apt-get update
@@ -78,30 +53,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch submodules
-        env:
-          HOOK_KEY: ${{ secrets.HOOK_DEPLOY_KEY }}
-          PROTOCOL_KEY: ${{ secrets.PROTOCOL_DEPLOY_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$HOOK_KEY" > ~/.ssh/hook_key
-          printf '%s\n' "$PROTOCOL_KEY" > ~/.ssh/protocol_key
-          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
-          cat >> ~/.ssh/config <<'CFG'
-          Host gh-hook
-            HostName github.com
-            User git
-            IdentityFile ~/.ssh/hook_key
-            IdentitiesOnly yes
-          Host gh-protocol
-            HostName github.com
-            User git
-            IdentityFile ~/.ssh/protocol_key
-            IdentitiesOnly yes
-          CFG
-          git config --global url."git@gh-hook:Distorbed678/Poe2ClientHook".insteadOf "https://github.com/Distorbed678/Poe2ClientHook"
-          git config --global url."git@gh-protocol:Distorbed678/Poe2Protocol".insteadOf "https://github.com/Distorbed678/Poe2Protocol"
-          git submodule update --init --recursive
+        with:
+          # client-hook and its nested protocol (public repositories).
+          submodules: recursive
       - uses: actions/setup-node@v4
         with:
           node-version: 22
