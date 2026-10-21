@@ -115,7 +115,9 @@ impl VersionFile {
 
     /// The client version the launcher installs by default (the newest embedded one).
     pub fn latest() -> Result<Self> {
-        let (v, _) = EMBEDDED_VERSIONS.last().context("no embedded version files")?;
+        let (v, _) = EMBEDDED_VERSIONS
+            .last()
+            .context("no embedded version files")?;
         Self::embedded(v)
     }
 
@@ -220,11 +222,8 @@ mod tests {
     fn todo_checksum_means_unknown() {
         let v = VersionFile::parse(&base("[exe]\nsha256 = \"TODO\"\n")).unwrap();
         assert_eq!(v.verify.exe_sha256_hash().unwrap(), None);
-        let v = VersionFile::parse(&base(&format!(
-            "[exe]\nsha256 = \"{}\"\n",
-            "AB".repeat(32)
-        )))
-        .unwrap();
+        let v = VersionFile::parse(&base(&format!("[exe]\nsha256 = \"{}\"\n", "AB".repeat(32))))
+            .unwrap();
         assert_eq!(
             v.verify.exe_sha256_hash().unwrap().unwrap(),
             "ab".repeat(32)

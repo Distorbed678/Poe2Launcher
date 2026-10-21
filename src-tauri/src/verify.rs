@@ -308,7 +308,10 @@ mod tests {
         assert_eq!(warn.checks.last().unwrap().status, Status::Warn);
         let hard = verify(
             tmp.path(),
-            &version(&format!("sha256 = \"{wrong}\"\nsha256_enforce = true\n"), ""),
+            &version(
+                &format!("sha256 = \"{wrong}\"\nsha256_enforce = true\n"),
+                "",
+            ),
         );
         assert!(!hard.ok);
         let todo = verify(tmp.path(), &version("sha256 = \"TODO\"\n", ""));
