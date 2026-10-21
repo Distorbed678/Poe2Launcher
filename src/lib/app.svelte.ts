@@ -2,6 +2,7 @@ import { ipc } from './ipc';
 import { initialInstall, reduce, type InstallEvent } from './install';
 import { listenInstall, listenPlay } from './events';
 import { run, toasts } from './notify.svelte';
+import { updater } from './update.svelte';
 import type { AppInfo, InstallStatus, PlayState, ProfileView, Settings } from './types';
 
 class AppState {
@@ -25,6 +26,8 @@ class AppState {
     this.info = (await run(() => ipc.appInfo())) ?? null;
     this.play = (await run(() => ipc.playState())) ?? this.play;
     this.ready = true;
+    // Launcher self-update: look once at start; a failure is a quiet state, never a toast.
+    void updater.check();
   }
 
   applyInstall(ev: InstallEvent): void {

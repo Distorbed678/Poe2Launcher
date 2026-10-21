@@ -42,6 +42,12 @@ zeroize = "1"
 # gymnastics in cargo.
 poe-hook-deploy = { path = "../client-hook/poe-hook-deploy" }
 
+# Self-update of the launcher: signed releases from GitHub (tauri.conf.json, plugins.updater).
+# Desktop only; the updater works on an AppImage (Linux) and the NSIS install (Windows).
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+
 [dev-dependencies]
 tempfile = "3"
 axum = "0.8"

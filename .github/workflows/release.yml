@@ -1,0 +1,182 @@
+name: Release
+
+# Push a tag `v<version>` (the version of tauri.conf.json, Cargo.toml and package.json) to build
+# the Linux AppImage and the Windows NSIS installer, sign the updater artifacts, and publish a
+# GitHub release with notes generated from the commits and `latest.json` (the launcher's update
+# endpoint: https://github.com/Distorbed678/Poe2Launcher/releases/latest/download/latest.json).
+#
+# Secrets (repository secrets, see docs/guides/launcher.md "Releasing" in Poe2ModdingProject):
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD   updater signing key
+#   HOOK_DEPLOY_KEY, PROTOCOL_DEPLOY_KEY                           read-only deploy keys for the
+#     private submodules, as in ci.yml (dropped when the repositories are public)
+#
+# The release is created as a draft first, the two platform jobs attach their files, and only
+# then is it published, so `releases/latest` never points at a half-finished release.
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Signing secrets exist
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          test -n "$KEY" || { echo "::error::secret TAURI_SIGNING_PRIVATE_KEY is not set"; exit 1; }
+          test -n "$PASSWORD" || { echo "::error::secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD is not set"; exit 1; }
+      - name: Tag matches the app version
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          conf=$(jq -r .version src-tauri/tauri.conf.json)
+          pkg=$(jq -r .version package.json)
+          crate=$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'"' -f2)
+          for v in "$conf" "$pkg" "$crate"; do
+            if [ "$v" != "$want" ]; then
+              echo "::error::tag $GITHUB_REF_NAME but versions are tauri.conf.json=$conf package.json=$pkg Cargo.toml=$crate"
+              exit 1
+            fi
+          done
+      - name: Create the draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          flags=()
+          case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
+          find_id() {
+            gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+              --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | tail -n1
+          }
+          # Re-running the workflow reuses the draft. (Drafts are only found through the list API.)
+          id=$(find_id)
+          if [ -z "$id" ]; then
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes \
+              --title "Poe2 Launcher $GITHUB_REF_NAME" "${flags[@]}"
+            id=$(find_id)
+          fi
+          test -n "$id" || { echo "::error::release for $GITHUB_REF_NAME not found"; exit 1; }
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: create-release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-appimage
+            os: ubuntu-22.04
+            bundles: appimage
+          - name: windows-nsis
+            os: windows-latest
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # The submodules Poe2ClientHook (and its nested Poe2Protocol) are private for now: each gets
+      # a read-only deploy key, exactly as in ci.yml.
+      - name: Fetch submodules
+        env:
+          HOOK_KEY: ${{ secrets.HOOK_DEPLOY_KEY }}
+          PROTOCOL_KEY: ${{ secrets.PROTOCOL_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$HOOK_KEY" > ~/.ssh/hook_key
+          printf '%s\n' "$PROTOCOL_KEY" > ~/.ssh/protocol_key
+          chmod 600 ~/.ssh/hook_key ~/.ssh/protocol_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          cat >> ~/.ssh/config <<'CFG'
+          Host gh-hook
+            HostName github.com
+            User git
+            IdentityFile ~/.ssh/hook_key
+            IdentitiesOnly yes
+          Host gh-protocol
+            HostName github.com
+            User git
+            IdentityFile ~/.ssh/protocol_key
+            IdentitiesOnly yes
+          CFG
+          git config --global url."git@gh-hook:Distorbed678/Poe2ClientHook".insteadOf "https://github.com/Distorbed678/Poe2ClientHook"
+          git config --global url."git@gh-protocol:Distorbed678/Poe2Protocol".insteadOf "https://github.com/Distorbed678/Poe2Protocol"
+          git submodule update --init --recursive
+      - name: System libraries for Tauri
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev \
+            pkg-config patchelf xdg-utils file
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # linuxdeploy (builds the AppImage) is itself an AppImage and needs no FUSE this way.
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+          NO_STRIP: 'true'
+        with:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          tagName: ${{ github.ref_name }}
+          releaseDraft: true
+          args: --bundles ${{ matrix.bundles }}
+
+  publish:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        run: |
+          # The release is still a draft here, so everything goes through its id.
+          api="repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
+          # latest.json must be there, with both platforms, before the release goes live.
+          asset=$(gh api "$api/assets" --jq '.[] | select(.name == "latest.json") | .id')
+          test -n "$asset" || { echo "::error::the release has no latest.json"; exit 1; }
+          gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > latest.json
+          jq -e '.platforms | has("linux-x86_64") and has("windows-x86_64")' latest.json >/dev/null \
+            || { echo "::error::latest.json lacks linux-x86_64 or windows-x86_64"; cat latest.json; exit 1; }
+          # The notes were generated when the draft was created; regenerate them if an upload step emptied them.
+          body=$(gh api "$api" --jq '.body // ""')
+          if [ -z "$body" ]; then
+            body=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body)
+            gh api -X PATCH "$api" -f body="$body" >/dev/null
+          fi
+          gh api -X PATCH "$api" -F draft=false >/dev/null

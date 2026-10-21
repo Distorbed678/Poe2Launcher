@@ -4,6 +4,7 @@
   import { router } from './lib/router.svelte';
   import { ipc } from './lib/ipc';
   import { run } from './lib/notify.svelte';
+  import { updater } from './lib/update.svelte';
   import Toasts from './lib/ui/Toasts.svelte';
   import Servers from './pages/Servers.svelte';
   import Account from './pages/Account.svelte';
@@ -43,6 +44,9 @@
   <header class="topbar">
     <span class="brand">Poe2 <b>Launcher</b></span>
     <span class="grow"></span>
+    {#if updater.state.kind === 'available'}
+      <a class="updatelink" href="#/settings">Update {updater.state.version} available</a>
+    {/if}
     <span class="muted">{app.info ? `client ${app.info.client_version}` : ''}</span>
   </header>
   <nav class="side" aria-label="Main">

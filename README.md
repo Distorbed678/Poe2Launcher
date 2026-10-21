@@ -10,7 +10,7 @@ Tauri 2 (Rust backend in `src-tauri/`) with a Svelte 5 + Vite + TypeScript UI (`
 | Account | log in (`POST /api/v1/login`, kind `launcher`), create an account (`POST /register`), log out (`POST /logout` revokes the token). The token lives in the OS keyring only |
 | Install | downloads client 0.5.5e from Steam depots with the player's own Steam login, then verifies it |
 | Mods | list, add from a folder or zip, enable/disable, load order, compatibility check |
-| Settings | install dir, hook DLL dir, Proton (Linux), Steam download options, theme |
+| Settings | install dir, hook DLL dir, Proton (Linux), Steam download options, theme, launcher updates (check, release notes, download + verify + restart) |
 | Play (footer) | deploys the hook, writes the auto-login token, starts the game, shows the status |
 
 The full guide (set-up, first run, troubleshooting) is `docs/guides/launcher.md` in Poe2ModdingProject; this file is the developer's view.
@@ -34,7 +34,7 @@ In a checkout of Poe2ModdingProject the launcher is `modules/launcher`; its `src
 ## Layout
 
 ```
-src/                 Svelte UI: App.svelte (shell + Play bar), pages/, lib/ (ipc.ts, install.ts, mods.ts, ...)
+src/                 Svelte UI: App.svelte (shell + Play bar), pages/, lib/ (ipc.ts, install.ts, mods.ts, update.ts (self-update logic), ...)
 src-tauri/src/
   core.rs            service layer (everything the UI can do; no Tauri types, testable)
   commands.rs        thin #[tauri::command] wrappers; lib.rs wires events to the window
@@ -112,6 +112,12 @@ POE_LAUNCHER_TEST_URL=http://127.0.0.1:18080 POE_LAUNCHER_TEST_USER=u POE_LAUNCH
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`): Ubuntu (WebKitGTK dev packages, `npm run check/test/build`, `cargo fmt --check`, `clippy -D warnings`, `cargo test`) and Windows (`cargo check`). The private submodules are fetched with two read-only **deploy keys** stored as the secrets `HOOK_DEPLOY_KEY` (on Poe2ClientHook) and `PROTOCOL_DEPLOY_KEY` (on Poe2Protocol); a deploy key can belong to one repository only. To rotate: generate a new key pair, replace the deploy key in that repository's settings and the secret here.
+
+## Self-update and releases
+
+The launcher updates itself with the Tauri updater plugin (`tauri-plugin-updater`, `tauri-plugin-process` for the restart; capabilities `updater:default`, `process:allow-restart`). `tauri.conf.json` has `bundle.createUpdaterArtifacts = true` and `plugins.updater`: the endpoint `https://github.com/Distorbed678/Poe2Launcher/releases/latest/download/latest.json`, the **public** signing key (`pubkey`), Windows install mode `passive`. The UI side is `src/lib/update.ts` (logic, tested with a fake plugin), `update.svelte.ts` (state), `ui/UpdatePanel.svelte` (Settings) and the badge in the top bar: a check runs at start; a failed check (404 on a private repo or before the first release, offline) is the quiet "no update info" state, a failed download or signature check is shown as an error and installs nothing. Linux updates replace the AppImage in place (only works when running as an AppImage); Windows runs the NSIS installer.
+
+`.github/workflows/release.yml` builds on a pushed tag `v*`: a draft release with generated notes, then the AppImage (`ubuntu-22.04`, `tauri build --bundles appimage`) and the NSIS installer (`windows-latest`, `--bundles nsis`) with `tauri-apps/tauri-action@v1`, signed with the secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `latest.json` merged, and the release published at the end. The submodules are fetched with the same two deploy keys as `ci.yml` (until the repos are public). How to tag, make the secrets and look after the key: the "Releasing" section of `docs/guides/launcher.md` in Poe2ModdingProject. Local check: `TAURI_SIGNING_PRIVATE_KEY=... TAURI_SIGNING_PRIVATE_KEY_PASSWORD=... npx tauri build --bundles appimage` gives the AppImage and its `.sig`.
 
 ## Commands the UI invokes
 

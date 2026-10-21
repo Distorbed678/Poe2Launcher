@@ -4,6 +4,7 @@
   import { ipc } from '../lib/ipc';
   import { run } from '../lib/notify.svelte';
   import PageHead from '../lib/ui/PageHead.svelte';
+  import UpdatePanel from '../lib/ui/UpdatePanel.svelte';
   import type { Settings } from '../lib/types';
 
   let draft = $state<Settings | null>(app.settings ? { ...app.settings } : null);
@@ -72,6 +73,8 @@
         <span>Theme</span>
         <select bind:value={draft.theme}><option value="dark">Dark</option><option value="light">Light</option></select>
       </label>
+      <h2 style="margin-top: 16px">Updates</h2>
+      <UpdatePanel />
       <h2 style="margin-top: 16px">About</h2>
       <dl class="kv">
         <dt>Launcher</dt><dd>{app.info?.launcher_version}</dd>

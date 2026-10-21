@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core events and the native folder/file pickers",
+  "description": "Main window: core events and the native folder/file pickers, the self-update check/install and the restart after it",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": ["core:default", "dialog:allow-open", "updater:default", "process:allow-restart"]
 }
