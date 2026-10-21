@@ -9,18 +9,15 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    api::{ApiClient, ApiError, ServerInfo},
+    api::{ApiClient, ServerInfo},
     core::{Core, ProfileView},
-    host::{
-        self, ConfigKind, HostDirs, HostSettings, PackageInfo, ServerRelease, config_path,
-        local_web_url, setup_config_path,
-    },
-    host_run::{RunState, StartSpec, run_oneshot},
+    host::{self, HostDirs, HostSettings, PackageInfo, ServerRelease, config_path, local_web_url},
+    host_run::{RunState, StartSpec, run_oneshot_stdin},
     paths::{reject_steam_paths, write_atomic},
     verify,
 };
@@ -34,8 +31,9 @@ impl Drop for BusyGuard<'_> {
     }
 }
 
-/// The wizard's answers. The admin password is typed in the UI, used once over the loopback
-/// API and wiped; it is never stored, logged, or put on a command line.
+/// The wizard's answers. The admin password is typed in the UI, handed once to
+/// `poe-server account create --password-stdin` and wiped; it is never stored, logged, or put
+/// on a command line.
 #[derive(Clone, Deserialize)]
 pub struct SetupRequest {
     pub settings: HostSettings,
@@ -317,7 +315,7 @@ impl Core {
         if s.configured {
             // An update: the package changed, so the config in it is written again from the
             // saved answers (the database lives outside the package and stays).
-            self.host_write_configs(&s, &package, false)
+            self.host_write_configs(&s, &package)
                 .context("the new package is installed, but its config could not be written")?;
         }
         self.emit("host:installed", json!({"package": package.name}));
@@ -338,13 +336,8 @@ impl Core {
 
     // --- config and setup ----------------------------------------------------------------
 
-    /// Writes `config/server.toml` (and with `with_setup` the private `server.setup.toml`).
-    fn host_write_configs(
-        &self,
-        s: &HostSettings,
-        pkg: &PackageInfo,
-        with_setup: bool,
-    ) -> Result<PathBuf> {
+    /// Writes `config/server.toml`.
+    fn host_write_configs(&self, s: &HostSettings, pkg: &PackageInfo) -> Result<PathBuf> {
         let example = std::fs::read_to_string(pkg.dir.join("config").join("server.example.toml"))
             .context("reading the package's config/server.example.toml")?;
         let game_dir = self.install_dir()?;
@@ -354,14 +347,8 @@ impl Core {
         let final_cfg = config_path(&pkg.dir);
         write_atomic(
             &final_cfg,
-            host::render_config(&example, s, &game_dir, &db, ConfigKind::Final)?.as_bytes(),
+            host::render_config(&example, s, &game_dir, &db)?.as_bytes(),
         )?;
-        if with_setup {
-            write_atomic(
-                &setup_config_path(&pkg.dir),
-                host::render_config(&example, s, &game_dir, &db, ConfigKind::Setup)?.as_bytes(),
-            )?;
-        }
         Ok(final_cfg)
     }
 
@@ -371,31 +358,6 @@ impl Core {
             cwd: pkg.dir.clone(),
             config: PathBuf::from("config").join(config),
             log_file: self.host_dirs().log_file(),
-        }
-    }
-
-    async fn host_wait_web(&self, url: &str, timeout: Duration) -> Result<()> {
-        let t0 = std::time::Instant::now();
-        let client = ApiClient::new(url);
-        loop {
-            if !self.host.is_running() {
-                let tail = self.host.tail(6).join("\n");
-                bail!("the server stopped while starting. Last log lines:\n{tail}");
-            }
-            if tokio::time::timeout(Duration::from_secs(2), client.server_info())
-                .await
-                .is_ok_and(|r| r.is_ok())
-            {
-                return Ok(());
-            }
-            if t0.elapsed() > timeout {
-                let _ = self.host.stop(Duration::from_secs(10)).await;
-                bail!(
-                    "the server did not answer within {} seconds",
-                    timeout.as_secs()
-                );
-            }
-            tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
 
@@ -421,11 +383,10 @@ impl Core {
     /// Applies the wizard: writes the config, makes (or promotes) the admin account when a
     /// password is given, and adds the server to Servers. The server must be stopped.
     ///
-    /// The password reaches the server over the loopback web API (`POST /register`) of a
-    /// private, short-lived start (loopback binds, registration open, a config of its own),
-    /// because `poe-server account create` takes the password only as a command-line argument.
-    /// The role is then set with `poe-server account role <name> admin`, which carries no
-    /// secret.
+    /// The account is made with the one-shot commands `poe-server account create <name>
+    /// --password-stdin` (the password goes to the child's standard input, which is then closed)
+    /// and `poe-server account role <name> admin`, against the package folder and its database.
+    /// The server is not started; the password is on no command line.
     pub async fn host_setup(&self, mut req: SetupRequest) -> Result<SetupResult> {
         let password = std::mem::take(&mut req.admin_password);
         let result = self.host_setup_inner(req, &password).await;
@@ -456,6 +417,10 @@ impl Core {
             if password.chars().count() < 8 || password.chars().count() > 256 {
                 bail!("the admin password is 8 to 256 characters");
             }
+            // It travels as one line on the server's standard input.
+            if password.contains(['\n', '\r']) {
+                bail!("the admin password cannot contain a line break");
+            }
         } else if !s.configured {
             bail!("enter a password for the admin account");
         }
@@ -477,12 +442,10 @@ impl Core {
         }
 
         self.host_step("writing the server config");
-        let config_file = self.host_write_configs(&s, &pkg, make_admin)?;
+        let config_file = self.host_write_configs(&s, &pkg)?;
         let mut admin_existed = false;
         if make_admin {
-            let result = self.host_make_admin(&s, &pkg, password).await;
-            let _ = std::fs::remove_file(setup_config_path(&pkg.dir));
-            admin_existed = result?;
+            admin_existed = self.host_make_admin(&s, &pkg, password).await?;
         }
         s.configured = true;
         let profile = self.host_ensure_profile(&mut s)?;
@@ -495,41 +458,43 @@ impl Core {
         })
     }
 
-    /// The private start: returns whether the account existed already.
+    /// Creates the admin account and gives it the admin role, with one-shot `poe-server`
+    /// commands (no server start). Returns whether the account existed already: it is then
+    /// only promoted and its password stays.
     async fn host_make_admin(
         &self,
         s: &HostSettings,
         pkg: &PackageInfo,
         password: &str,
     ) -> Result<bool> {
-        let url = local_web_url(s);
-        self.host_step("starting the server privately to create the admin account");
-        self.host.start(
-            self.events.clone(),
-            &self.host_spec(pkg, "server.setup.toml"),
-        )?;
-        let created = async {
-            self.host_step("waiting for the server (it reads the game data first)");
-            self.host_wait_web(&url, Duration::from_secs(240)).await?;
-            self.host_step(&format!("creating the account {}", s.admin_name));
-            match ApiClient::new(&url).register(&s.admin_name, password).await {
-                Ok(_) => Ok(false),
-                Err(ApiError::Status { status: 409, .. }) => Ok(true),
-                Err(e) => Err(anyhow!("creating the admin account failed: {e}")),
-            }
-        }
+        let spec = self.host_spec(pkg, "server.toml");
+        self.host_step(&format!("creating the account {}", s.admin_name));
+        // One line on the child's standard input; wiped as soon as it is written.
+        let mut line = Vec::with_capacity(password.len() + 1);
+        line.extend_from_slice(password.as_bytes());
+        line.push(b'\n');
+        let created = run_oneshot_stdin(
+            &spec.exe,
+            &spec.cwd,
+            &spec.config,
+            &["account", "create", &s.admin_name, "--password-stdin"],
+            Some(&line),
+        )
         .await;
-        self.host_step("stopping the private start");
-        let stopped = self.host.stop(Duration::from_secs(20)).await;
-        let existed = created?;
-        stopped?;
+        line.iter_mut().for_each(|b| *b = 0);
+        let existed = match created {
+            Ok(_) => false,
+            // The server answers with the account error's text.
+            Err(e) if e.to_string().contains("that username is taken") => true,
+            Err(e) => bail!("creating the admin account failed: {e:#}"),
+        };
         self.host_step(&format!("giving {} the admin role", s.admin_name));
-        let spec = self.host_spec(pkg, "server.setup.toml");
-        run_oneshot(
+        run_oneshot_stdin(
             &spec.exe,
             &spec.cwd,
             &spec.config,
             &["account", "role", &s.admin_name, "admin"],
+            None,
         )
         .await?;
         Ok(existed)
@@ -554,7 +519,7 @@ impl Core {
             );
         }
         if !config_path(&pkg.dir).is_file() {
-            self.host_write_configs(&s, &pkg, false)?;
+            self.host_write_configs(&s, &pkg)?;
         }
         let busy = host::busy_ports(&s);
         if !busy.is_empty() {

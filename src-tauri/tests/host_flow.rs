@@ -40,6 +40,16 @@ fn fake_package(
     game: &str,
     extra: &[(&str, &[u8], Option<tar::EntryType>)],
 ) -> Vec<u8> {
+    fake_package_with_exe(version, game, extra, b"#!/bin/sh\nexit 0\n")
+}
+
+/// Like [`fake_package`], with the given body for the package's `poe-server` script.
+fn fake_package_with_exe(
+    version: &str,
+    game: &str,
+    extra: &[(&str, &[u8], Option<tar::EntryType>)],
+    exe_body: &[u8],
+) -> Vec<u8> {
     let name = pkg_name(version);
     let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
     let mut tb = tar::Builder::new(gz);
@@ -53,7 +63,7 @@ fn fake_package(
     };
     let files: Vec<(String, Vec<u8>, u32)> = vec![
         ("release.json".into(), release.into_bytes(), 0o644),
-        (exe.into(), b"#!/bin/sh\nexit 0\n".to_vec(), 0o755),
+        (exe.into(), exe_body.to_vec(), 0o755),
         (
             "config/server.example.toml".into(),
             b"[game]\nversion = \"0.5.5e\"\n".to_vec(),
@@ -177,6 +187,23 @@ async fn spawn_mock(archive: Vec<u8>, claimed: String) -> (String, Arc<Mock>) {
     *mock.base.lock().unwrap() = url.clone();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (url, mock)
+}
+
+/// A random throwaway password for a test (never a fixed value, never written to a file).
+fn throwaway_password() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let mut out = String::from("tp-");
+    for _ in 0..3 {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        );
+        out.push_str(&format!("{:016x}", h.finish()));
+    }
+    out
 }
 
 struct Env {
@@ -492,6 +519,135 @@ mod fake {
         );
     }
 
+    /// The admin is made with two one-shot commands, the password on the child's standard input
+    /// and on no command line; the server is not started.
+    #[tokio::test]
+    async fn the_admin_password_goes_to_stdin_not_to_a_command_line() {
+        let e = env();
+        let game = e.tmp.path().join("game");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::write(game.join("PathOfExileSteam.exe"), b"x").unwrap();
+        e.core
+            .set_settings(poe2_launcher_lib::settings::Settings {
+                install_dir: Some(game),
+                ..Default::default()
+            })
+            .unwrap();
+        // Records its arguments, and the line `account create` reads; `taken` makes `create` fail
+        // the way the real server does for an existing name.
+        let body = b"#!/bin/sh\n\
+            echo \"$*\" >> calls.log\n\
+            if [ \"$1 $2\" = \"account create\" ]; then\n\
+              IFS= read -r pw; printf '%s' \"$pw\" > stdin.log\n\
+              if [ -f taken ]; then echo 'that username is taken' >&2; exit 1; fi\n\
+            fi\n\
+            exit 0\n";
+        let src = tempfile::tempdir().unwrap();
+        let archive = src.path().join(format!("{}.tar.gz", pkg_name("0.1.0")));
+        std::fs::write(&archive, fake_package_with_exe("0.1.0", GAME, &[], body)).unwrap();
+        let out = e
+            .core
+            .host_install_local(archive.to_str().unwrap())
+            .await
+            .unwrap();
+        let pkg = out.package.dir.clone();
+
+        let free = |n: usize| -> Vec<u16> {
+            let ls: Vec<_> = (0..n)
+                .map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap())
+                .collect();
+            ls.iter().map(|l| l.local_addr().unwrap().port()).collect()
+        };
+        let ports = free(3);
+        let s = HostSettings {
+            login_port: ports[0],
+            instance_port: ports[1],
+            web_port: ports[2],
+            admin_name: "boss".into(),
+            ..Default::default()
+        };
+        let password = throwaway_password();
+        let res = e
+            .core
+            .host_setup(poe2_launcher_lib::host_ops::SetupRequest {
+                settings: s.clone(),
+                admin_password: password.clone(),
+            })
+            .await
+            .unwrap();
+        assert!(!res.admin_existed);
+        assert!(!e.core.host.is_running(), "the server was not started");
+        let calls = std::fs::read_to_string(pkg.join("calls.log")).unwrap();
+        assert_eq!(
+            calls.lines().collect::<Vec<_>>(),
+            [
+                "account create boss --password-stdin",
+                "account role boss admin"
+            ]
+        );
+        assert_eq!(
+            std::fs::read_to_string(pkg.join("stdin.log")).unwrap(),
+            password
+        );
+        assert!(
+            !calls.contains(&password),
+            "the password is on no command line"
+        );
+        assert!(!pkg.join("config/server.setup.toml").exists());
+        assert!(pkg.join("config/server.toml").is_file());
+        // The password is in no file the launcher wrote (the fake's own stdin.log aside).
+        for f in all_files(e.tmp.path()) {
+            if f.file_name().is_some_and(|n| n == "stdin.log") {
+                continue;
+            }
+            if let Ok(t) = std::fs::read_to_string(&f) {
+                assert!(!t.contains(&password), "password in {}", f.display());
+            }
+        }
+
+        // An existing name is promoted; its password stays.
+        std::fs::write(pkg.join("taken"), b"").unwrap();
+        std::fs::remove_file(pkg.join("calls.log")).unwrap();
+        let res = e
+            .core
+            .host_setup(poe2_launcher_lib::host_ops::SetupRequest {
+                settings: s.clone(),
+                admin_password: throwaway_password(),
+            })
+            .await
+            .unwrap();
+        assert!(res.admin_existed);
+        let calls = std::fs::read_to_string(pkg.join("calls.log")).unwrap();
+        assert!(calls.contains("account role boss admin"), "{calls}");
+
+        // Another failure of `create` is an error that never carries the password.
+        let body = b"#!/bin/sh\nIFS= read -r pw; echo 'disk full' >&2; exit 1\n";
+        std::fs::write(pkg.join("poe-server"), body).unwrap();
+        let pw = throwaway_password();
+        let err = e
+            .core
+            .host_setup(poe2_launcher_lib::host_ops::SetupRequest {
+                settings: s.clone(),
+                admin_password: pw.clone(),
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("disk full") && !err.contains(&pw), "{err}");
+
+        // A password with a line break cannot be sent as one line.
+        let err = e
+            .core
+            .host_setup(poe2_launcher_lib::host_ops::SetupRequest {
+                settings: s,
+                admin_password: "line\nbreak-password".into(),
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("line break"), "{err}");
+    }
+
     #[test]
     fn the_password_is_not_printed_by_debug() {
         let r = poe2_launcher_lib::host_ops::SetupRequest {
@@ -524,7 +680,8 @@ async fn real_package_setup_start_status_log_stop() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(29500);
     let e = env();
-    let password = "correct-horse-battery";
+    let password = throwaway_password();
+    let password = password.as_str();
 
     // The launcher's installed game is the given folder.
     let settings = Settings {
@@ -568,12 +725,12 @@ async fn real_package_setup_start_status_log_stop() {
     );
     assert!(!res.admin_existed);
     assert_eq!(res.profile.url, format!("http://127.0.0.1:{}", base + 2));
-    assert!(!e.core.host.is_running(), "the private start ended");
+    assert!(!e.core.host.is_running(), "setup does not start the server");
     let pkg_dir = out.package.dir.clone();
     assert!(pkg_dir.join("config/server.toml").is_file());
     assert!(
         !pkg_dir.join("config/server.setup.toml").exists(),
-        "the private config is deleted"
+        "no private config is made any more"
     );
     let cfg = std::fs::read_to_string(pkg_dir.join("config/server.toml")).unwrap();
     assert!(

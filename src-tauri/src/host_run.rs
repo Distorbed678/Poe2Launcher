@@ -316,15 +316,49 @@ fn kill_blocking(pid: u32) {
 }
 
 /// Runs `poe-server <args>` to completion in the package folder (the offline `account ...` and
-/// `character ...` commands) and returns what it printed. Never pass a secret in `args`.
+/// `character ...` commands) and returns what it printed. Never pass a secret in `args`; use
+/// [`run_oneshot_stdin`].
 pub async fn run_oneshot(exe: &Path, cwd: &Path, config: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new(exe)
+    run_oneshot_stdin(exe, cwd, config, args, None).await
+}
+
+/// Like [`run_oneshot`], with `stdin` written to the child's standard input, which is then
+/// closed. This is how a secret reaches the server (`account create <name> --password-stdin`):
+/// unlike an argument or an environment variable, other programs cannot read it. The bytes are
+/// not copied, logged or put in the error text.
+pub async fn run_oneshot_stdin(
+    exe: &Path,
+    cwd: &Path,
+    config: &Path,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+) -> Result<String> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut child = Command::new(exe)
         .args(args)
         .current_dir(cwd)
         .env("POE_CONFIG", config)
         .env("NO_COLOR", "1")
-        .stdin(Stdio::null())
-        .output()
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("running {}", exe.display()))?;
+    if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
+        // A child that ends before it reads (a bad config) closes the pipe: its exit status
+        // and output below say why, so a write error is not reported on its own.
+        let _ = pipe.write_all(bytes).await;
+        let _ = pipe.shutdown().await;
+        drop(pipe);
+    }
+    let out = child
+        .wait_with_output()
         .await
         .with_context(|| format!("running {}", exe.display()))?;
     let text = format!(
@@ -455,5 +489,31 @@ mod tests {
         assert_eq!(all.len(), LOG_LINES);
         assert_eq!(all.last().unwrap(), &format!("line {}", LOG_LINES + 49));
         assert_eq!(rt.tail(2).len(), 2);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdin_reaches_the_child_and_not_its_command_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Prints how many arguments it got and what it read, then fails for `fail`.
+        let exe = script(
+            tmp.path(),
+            "read line; echo \"args=$# line=$line\"; [ \"$1\" = fail ] && exit 2; exit 0",
+        );
+        let cfg = Path::new("c.toml");
+        let out = run_oneshot_stdin(&exe, tmp.path(), cfg, &["create"], Some(b"s3cret value\n"))
+            .await
+            .unwrap();
+        assert_eq!(out, "args=1 line=s3cret value");
+        // Without stdin the child sees end of input at once.
+        let out = run_oneshot(&exe, tmp.path(), cfg, &["x"]).await.unwrap();
+        assert_eq!(out, "args=1 line=");
+        // A failure reports the child's output and its exit status.
+        let e = run_oneshot_stdin(&exe, tmp.path(), cfg, &["fail"], Some(b"hunter22 pw\n"))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("poe-server fail failed"), "{e}");
+        assert!(e.contains("args=1"), "{e}");
     }
 }

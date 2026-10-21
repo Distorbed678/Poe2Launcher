@@ -64,12 +64,13 @@ client-hook/         submodule: Poe2ClientHook (poe-hook-deploy used as a path d
 
 | What | Where |
 |---|---|
+| App identifier (`org.poe2modding.launcher`) | Names the window class and the webview storage folder only; the keyring service and folders below are fixed names and do not derive from it |
 | Launcher token (+ account name, expiry) | OS keyring: service `poe2-launcher`, user = profile id (Secret Service / Credential Manager / Keychain). **Never a file** |
 | Profiles, settings | `<config>/poe2-launcher/profiles.json`, `settings.json` (`~/.config/...`, `%APPDATA%\...`) |
 | DepotDownloader, game, Proton prefix, logs | `<data>/poe2-launcher/{tools,game/<version>,proton-prefix,logs,crash-dumps}` |
 | Server settings (name, ports, public host, admin name; no secrets) | `<config>/poe2-launcher/host.json` |
 | Server package, database, log | `<data>/poe2-launcher/server/{packages,downloads,data,server.log}` (the database is outside the package, so an update keeps accounts and characters) |
-| Admin password (Host a server) | typed in the UI, sent once over the loopback web API of a private start of the server (`POST /register`) and wiped. Not stored, not in a file, not on a command line |
+| Admin password (Host a server) | typed in the UI, written once to the standard input of `poe-server account create <name> --password-stdin` (a one-shot command, the server is not started) and wiped. Not stored, not in a file, not on a command line |
 | Steam password | typed in the UI, written once to DepotDownloader's stdin when it asks, wiped. Not stored, not on a command line |
 
 `POE2_LAUNCHER_HOME=<dir>` puts config and data under `<dir>/config` and `<dir>/data` (tests, portable use).
@@ -149,4 +150,4 @@ Contributing: [CONTRIBUTING.md](https://github.com/Distorbed678/Poe2ModdingProje
 
 ## Licence
 
-MIT OR Apache-2.0, at your option: [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE). Copyright (c) 2026 Distorbed678 and contributors.
+MIT: [LICENSE](LICENSE). Copyright (c) 2026 Distorbed678 and contributors.

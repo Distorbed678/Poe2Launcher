@@ -2,6 +2,7 @@
   "name": "poe2-launcher",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Launcher for the PoE2 0.5.5e private server",
   "scripts": {

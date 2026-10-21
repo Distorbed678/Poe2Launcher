@@ -748,10 +748,6 @@ pub fn prune_packages(packages_dir: &Path, keep: &Path) {
 pub fn config_path(package: &Path) -> PathBuf {
     package.join("config").join("server.toml")
 }
-/// The loopback-only config the first start uses to make the admin account.
-pub fn setup_config_path(package: &Path) -> PathBuf {
-    package.join("config").join("server.setup.toml")
-}
 
 fn table_at<'a>(doc: &'a mut DocumentMut, path: &[&str]) -> &'a mut Table {
     let mut t = doc.as_table_mut();
@@ -785,17 +781,6 @@ fn set_int(doc: &mut DocumentMut, path: &[&str], key: &str, v: i64) {
     set_value(doc, path, key, v.into());
 }
 
-/// What differs between the real config and the one used while the admin is created.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConfigKind {
-    /// The config the server runs with.
-    Final,
-    /// Loopback binds and open registration: the server is started once, privately, so that the
-    /// launcher can create the admin account over the API (the password must not go on a
-    /// command line, and `poe-server account create` takes it only there).
-    Setup,
-}
-
 /// `server.example.toml` of the package with the wizard's answers in it. Comments and every
 /// other key stay as the package shipped them.
 pub fn render_config(
@@ -803,19 +788,13 @@ pub fn render_config(
     s: &HostSettings,
     game_dir: &Path,
     database: &Path,
-    kind: ConfigKind,
 ) -> Result<String> {
     s.validate()?;
     let mut doc: DocumentMut = example
         .parse()
         .context("the package's config/server.example.toml is not valid TOML")?;
-    let setup = kind == ConfigKind::Setup;
-    let bind_ip = if setup { "127.0.0.1" } else { "0.0.0.0" };
-    let web_ip = if setup || !s.web_public {
-        "127.0.0.1"
-    } else {
-        "0.0.0.0"
-    };
+    let bind_ip = "0.0.0.0";
+    let web_ip = if s.web_public { "0.0.0.0" } else { "127.0.0.1" };
 
     set_str(&mut doc, &["game"], "game_dir", &game_dir.to_string_lossy());
     set_str(&mut doc, &["network"], "public_host", s.public_host.trim());
@@ -853,9 +832,8 @@ pub fn render_config(
         &mut doc,
         &["accounts"],
         "open_registration",
-        setup || s.open_registration,
+        s.open_registration,
     );
-    set_bool(&mut doc, &["accounts"], "dev_machine_hash_login", false);
     set_str(&mut doc, &["database"], "path", &database.to_string_lossy());
     Ok(doc.to_string())
 }
@@ -1107,7 +1085,6 @@ static_dir = ""
 
 [accounts]
 open_registration = false
-dev_machine_hash_login = true
 name_prefix = "Exile"
 
 [database]
@@ -1132,7 +1109,6 @@ path = "runtime/server.sqlite"
             &s,
             Path::new("/games/poe2"),
             Path::new("/d/server.sqlite"),
-            ConfigKind::Final,
         )
         .unwrap();
         let doc: toml_edit::DocumentMut = out.parse().unwrap();
@@ -1161,50 +1137,17 @@ path = "runtime/server.sqlite"
         assert_eq!(doc["web"]["bind"].as_str(), Some("0.0.0.0:30080"));
         assert_eq!(doc["web"]["static_dir"].as_str(), Some("web-admin"));
         assert_eq!(doc["accounts"]["open_registration"].as_bool(), Some(true));
-        assert_eq!(
-            doc["accounts"]["dev_machine_hash_login"].as_bool(),
-            Some(false)
-        );
         assert_eq!(doc["accounts"]["name_prefix"].as_str(), Some("Exile"));
         assert_eq!(doc["database"]["path"].as_str(), Some("/d/server.sqlite"));
         assert!(out.contains("# header comment") && out.contains("# trailing comment"));
 
-        // Loopback web unless asked, and the setup variant is private with registration open.
+        // The web API stays on loopback unless asked.
         let s2 = HostSettings {
             web_public: false,
             ..s.clone()
         };
-        let out = render_config(
-            EXAMPLE,
-            &s2,
-            Path::new("/g"),
-            Path::new("/d"),
-            ConfigKind::Final,
-        )
-        .unwrap();
+        let out = render_config(EXAMPLE, &s2, Path::new("/g"), Path::new("/d")).unwrap();
         assert!(out.contains("127.0.0.1:30080"));
-        let setup = render_config(
-            EXAMPLE,
-            &HostSettings {
-                open_registration: false,
-                ..s
-            },
-            Path::new("/g"),
-            Path::new("/d"),
-            ConfigKind::Setup,
-        )
-        .unwrap();
-        let doc: toml_edit::DocumentMut = setup.parse().unwrap();
-        assert_eq!(
-            doc["network"]["login"]["bind"].as_str(),
-            Some("127.0.0.1:30481")
-        );
-        assert_eq!(
-            doc["network"]["instance"]["bind"].as_str(),
-            Some("127.0.0.1:30112")
-        );
-        assert_eq!(doc["web"]["bind"].as_str(), Some("127.0.0.1:30080"));
-        assert_eq!(doc["accounts"]["open_registration"].as_bool(), Some(true));
     }
 
     #[test]
@@ -1214,7 +1157,6 @@ path = "runtime/server.sqlite"
             &HostSettings::default(),
             Path::new("/g"),
             Path::new("/d"),
-            ConfigKind::Final,
         )
         .unwrap();
         let doc: toml_edit::DocumentMut = out.parse().unwrap();
