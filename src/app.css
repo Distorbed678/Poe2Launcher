@@ -122,7 +122,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .btn.sm { min-height: 28px; padding: 0 10px; font-size: 12.5px; border-radius: 7px; }
 .btn.icon { padding: 0; width: 34px; }
 .btn.icon.sm { width: 28px; }
-.link { background: none; border: 0; padding: 0; color: var(--link); text-decoration: underline; cursor: pointer; font: inherit; }
+.link { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; background: none; border: 0; padding: 0; color: var(--link); text-decoration: underline; cursor: pointer; font: inherit; }
 
 input:not([type='checkbox']):not([type='radio']), select, textarea {
   background: var(--bg-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm);
@@ -412,6 +412,7 @@ main:focus { outline: none; }
 .server-url { margin: 6px 0 0; }
 .server-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
 .server-info { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+.stat-row.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .stat-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
 .stat { padding: 10px 12px; border-radius: 10px; background: var(--bg-2); border: 1px solid var(--line-soft); }
 .stat small { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint); font-weight: 650; }
@@ -494,3 +495,11 @@ dialog.modal::backdrop { background: rgb(4 6 12 / 0.62); backdrop-filter: blur(3
 
 /* client hook card */
 .hook-card dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
+/* shell: the About link at the foot of the sidebar, section headers inside tabbed pages */
+.side a.about-link { margin-top: 8px; padding: 6px 12px; min-height: 0; font-size: 12px; color: var(--faint); }
+.side a.about-link:hover { color: var(--text); }
+.sechead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin-bottom: 16px; }
+.sechead p { margin: 0; flex: 1 1 300px; min-width: 0; }
+.tabs-wrap { margin-bottom: 16px; }
+@media (max-width: 900px) { .stat-row.four { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

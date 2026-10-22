@@ -50,7 +50,7 @@
   <div class="card-head"><span class="head-icon"><Icon name="shield" size={16} /></span><h2>Disclaimer</h2></div>
   <p class="hint">
     This is an unofficial, fan-made project for personal and educational use. It is <b>not affiliated with, endorsed by or connected to Grinding Gear Games</b>;
-    "Path of Exile" is their trademark. No game files are distributed: the Install page downloads the game from Steam with <b>your</b> Steam account, so you need your own legal copy.
+    "Path of Exile" is their trademark. No game files are distributed: the Library downloads the game from Steam with <b>your</b> Steam account, so you need your own legal copy.
     The client hook that the launcher deploys can be detected as a modification by anti-cheat software; use is at your own risk.
   </p>
 </section>

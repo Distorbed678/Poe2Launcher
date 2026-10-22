@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes, formatExpiry, formatUptime } from './format';
+import { formatAgo, formatBytes, formatExpiry, formatNewsDate, formatUptime } from './format';
 
 describe('format', () => {
   it('formats bytes in decimal units', () => {
@@ -22,5 +22,15 @@ describe('format', () => {
     expect(formatExpiry(160, 100)).toBe('in 1 min');
     expect(formatExpiry(100 + 7200, 100)).toBe('in 2 h');
     expect(formatExpiry(100 + 6 * 86400, 100)).toBe('in 6 days');
+  });
+
+  it('formats news dates and ages', () => {
+    expect(formatNewsDate('2026-10-22')).toBe('22 Oct 2026');
+    expect(formatNewsDate('2026-01-05T10:00:00Z')).toBe('5 Jan 2026');
+    expect(formatNewsDate('soon')).toBe('soon');
+    expect(formatAgo(1000, 1010)).toBe('just now');
+    expect(formatAgo(1000, 1000 + 300)).toBe('5 min ago');
+    expect(formatAgo(1000, 1000 + 7200)).toBe('2 h ago');
+    expect(formatAgo(1000, 1000 + 3 * 86400)).toBe('3 d ago');
   });
 });

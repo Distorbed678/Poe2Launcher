@@ -5,8 +5,11 @@
   import Chip from './Chip.svelte';
   import Spinner from './Spinner.svelte';
 
+  // The official mode has no server of its own to host or join.
   const steps = $derived(
-    setupSteps({ gameInstalled: app.status?.installed ?? false, hookReady: hookReady(app.hook), profiles: app.profiles.length }),
+    setupSteps({ gameInstalled: app.status?.installed ?? false, hookReady: hookReady(app.hook), profiles: app.profiles.length }).filter(
+      (s) => !app.official || s.id !== 'server',
+    ),
   );
   const now = $derived(currentStep(steps));
   const show = $derived(setupNeeded(steps));
@@ -33,7 +36,7 @@
             {#if s.done}
               <Chip tone="ok">done</Chip>
             {:else if s.id === 'game'}
-              <a class="btn" class:primary={s.id === now} href="#/install"><Icon name="install" size={14} /> Open Install</a>
+              <a class="btn" class:primary={s.id === now} href="#/library"><Icon name="install" size={14} /> Open Library</a>
             {:else if s.id === 'hook'}
               <button type="button" class="btn" class:primary={s.id === now} disabled={app.hookTask !== ''} onclick={() => void app.installHook()}>
                 {#if installingHook}<Spinner size={14} /> Downloading{:else}<Icon name="download" size={14} /> Download{/if}
@@ -41,7 +44,8 @@
             {:else}
               <a class="btn" class:primary={s.id === now} href="#/host"><Icon name="host" size={14} /> Host a server</a>
               <span class="hint">or</span>
-              <a class="btn" href="#/servers" onclick={(e) => { e.preventDefault(); document.getElementById('add-server')?.scrollIntoView({ behavior: 'smooth' }); }}><Icon name="plus" size={14} /> Join a server</a>
+              <a class="btn" href="#/servers?tab=browse"><Icon name="compass" size={14} /> Find a server</a>
+              <a class="btn" href="#/servers"><Icon name="plus" size={14} /> Add by address</a>
             {/if}
           </div>
         </li>

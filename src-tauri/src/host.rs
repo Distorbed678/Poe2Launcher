@@ -179,6 +179,7 @@ pub fn valid_public_host(host: &str) -> bool {
 #[derive(Debug, Clone)]
 pub struct HostDirs {
     config_file: PathBuf,
+    backup_file: PathBuf,
     root: PathBuf,
 }
 
@@ -186,6 +187,7 @@ impl HostDirs {
     pub fn new(dirs: &Dirs) -> Self {
         Self {
             config_file: dirs.config.join("host.json"),
+            backup_file: dirs.config.join("backup.json"),
             root: dirs.data.join("server"),
         }
     }
@@ -208,6 +210,13 @@ impl HostDirs {
     }
     pub fn log_file(&self) -> PathBuf {
         self.root.join("server.log")
+    }
+    /// Backups of the database (see `backup.rs`).
+    pub fn backups(&self) -> PathBuf {
+        self.root.join("backups")
+    }
+    pub fn backup_settings_file(&self) -> &Path {
+        &self.backup_file
     }
 }
 
@@ -835,6 +844,10 @@ pub fn render_config(
         s.open_registration,
     );
     set_str(&mut doc, &["database"], "path", &database.to_string_lossy());
+    // An admin's "restart" ends the process with code 75 and the launcher starts it again (on
+    // every platform: host_run.rs). Older servers ignore the key (an unknown key is only warned
+    // about by newer ones).
+    set_str(&mut doc, &["server"], "restart_mode", "exit");
     Ok(doc.to_string())
 }
 
@@ -1139,6 +1152,7 @@ path = "runtime/server.sqlite"
         assert_eq!(doc["accounts"]["open_registration"].as_bool(), Some(true));
         assert_eq!(doc["accounts"]["name_prefix"].as_str(), Some("Exile"));
         assert_eq!(doc["database"]["path"].as_str(), Some("/d/server.sqlite"));
+        assert_eq!(doc["server"]["restart_mode"].as_str(), Some("exit"));
         assert!(out.contains("# header comment") && out.contains("# trailing comment"));
 
         // The web API stays on loopback unless asked.

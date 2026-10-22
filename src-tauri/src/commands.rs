@@ -8,7 +8,9 @@ use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::{
-    api::{AccountInfo, ServerInfo},
+    api::{AccountInfo, ServerInfo, ServerStatus},
+    backup::{BackupInfo, BackupSettings},
+    backup_ops::BackupStatus,
     core::{
         Core, GameVersionView, InstallRequest, InstallStatus, LogoutResult, PlayState, ProfileView,
         UrlOpener,
@@ -17,8 +19,12 @@ use crate::{
     hook_ops::{HookCheck, HookOutcome, HookStatus},
     host::{HostSettings, ServerRelease},
     host_ops::{HostStatus, InstallOutcome, SetupRequest, SetupResult},
+    logs::{LogContent, LogList},
     mods::{InstalledMod, InstalledNew},
+    news::NewsFeed,
+    serverlist::{ProbeResult, ServerList},
     settings::Settings,
+    space::SpaceCheck,
     steam::SteamLogin,
     verify::VerifyReport,
 };
@@ -176,6 +182,24 @@ pub fn install_start(app: App<'_>, request: InstallRequest) -> Res<()> {
 #[tauri::command]
 pub fn install_input(app: App<'_>, text: String) -> Res<()> {
     app.install_input(&text).map_err(err)
+}
+
+/// Pauses the download (DepotDownloader is stopped; what is on disk stays).
+#[tauri::command]
+pub fn install_pause(app: App<'_>) -> Res<()> {
+    app.install_pause().map_err(err)
+}
+
+/// Resumes a paused download (the password is only needed when no Steam login is remembered).
+#[tauri::command]
+pub fn install_resume(app: App<'_>, steam_password: String) -> Res<()> {
+    app.inner().install_resume(steam_password).map_err(err)
+}
+
+/// Disk space needed for the selected version against the free space of the target disk.
+#[tauri::command]
+pub async fn install_space(app: App<'_>) -> Res<SpaceCheck> {
+    app.install_space().await.map_err(err)
 }
 
 #[tauri::command]
@@ -353,4 +377,111 @@ pub fn host_open_guide(handle: tauri::AppHandle) -> Res<()> {
     TauriOpener(handle)
         .open(crate::host::HOSTING_GUIDE_URL)
         .map_err(err)
+}
+
+// --- Home: news, server status -----------------------------------------------------------
+
+/// Release notes of the project's repositories and `news.json`, cached; never an error.
+#[tauri::command]
+pub async fn news_get(app: App<'_>, force: bool) -> Res<NewsFeed> {
+    Ok(app.news_get(force).await)
+}
+
+/// `GET /server` of one of the user's servers with the ping measured by the launcher.
+#[tauri::command]
+pub async fn server_status(app: App<'_>, id: String) -> Res<ServerStatus> {
+    app.server_status(&id).await.map_err(err)
+}
+
+// --- Server browser ------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn server_list_get(app: App<'_>, force: bool) -> Res<ServerList> {
+    Ok(app.server_list_get(force).await)
+}
+
+/// Asks the listed servers with these ids (`GET /server`, in parallel, short timeouts).
+#[tauri::command]
+pub async fn server_list_probe(app: App<'_>, ids: Vec<String>) -> Res<Vec<ProbeResult>> {
+    app.server_list_probe(&ids).await.map_err(err)
+}
+
+// --- Logs and crash dumps ------------------------------------------------------------------
+
+#[tauri::command]
+pub fn log_list(app: App<'_>) -> LogList {
+    app.log_list()
+}
+
+#[tauri::command]
+pub fn log_read(app: App<'_>, id: String, lines: usize) -> Res<LogContent> {
+    app.log_read(&id, lines).map_err(err)
+}
+
+/// The text of "Copy for a bug report" (redacted).
+#[tauri::command]
+pub fn log_report(app: App<'_>, id: Option<String>, lines: usize) -> Res<String> {
+    app.log_report(id.as_deref(), lines).map_err(err)
+}
+
+/// Opens the folder of `game`, `server` or `crash` logs in the file manager.
+#[tauri::command]
+pub fn log_open_folder(app: App<'_>, handle: tauri::AppHandle, kind: String) -> Res<()> {
+    let dir = app.log_folder(&kind).map_err(err)?;
+    handle
+        .opener()
+        .open_path(dir.display().to_string(), None::<&str>)
+        .map_err(|e| format!("could not open the folder: {e}"))
+}
+
+// --- Server backups ------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn backup_status(app: App<'_>) -> Res<BackupStatus> {
+    app.backup_status().map_err(err)
+}
+
+#[tauri::command]
+pub async fn backup_create(app: App<'_>) -> Res<BackupInfo> {
+    let core = app.inner().clone();
+    tokio::task::spawn_blocking(move || core.backup_create())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(err)
+}
+
+/// Restores a backup; returns the backup made of the database that was replaced.
+#[tauri::command]
+pub async fn backup_restore(app: App<'_>, name: String) -> Res<Option<BackupInfo>> {
+    let core = app.inner().clone();
+    tokio::task::spawn_blocking(move || core.backup_restore(&name))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(err)
+}
+
+#[tauri::command]
+pub fn backup_delete(app: App<'_>, name: String) -> Res<()> {
+    app.backup_delete(&name).map_err(err)
+}
+
+#[tauri::command]
+pub fn backup_set_settings(app: App<'_>, auto: bool, keep: u32) -> Res<BackupSettings> {
+    app.backup_set_settings(auto, keep).map_err(err)
+}
+
+// --- Links -----------------------------------------------------------------------------------
+
+/// Opens an `https://` link from the news, the server list or a server's message in the system
+/// browser. Anything else is refused: the text behind these links is not trusted.
+#[tauri::command]
+pub fn open_link(handle: tauri::AppHandle, url: String) -> Res<()> {
+    let url = url.trim();
+    if !crate::news::is_https_link(url) {
+        return Err("only https:// links are opened".into());
+    }
+    handle
+        .opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| format!("could not open the browser: {e}"))
 }

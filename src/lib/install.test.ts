@@ -67,4 +67,19 @@ describe('install reducer', () => {
     expect(validGuardCode('1234')).toBe(false);
     expect(validGuardCode('12 45')).toBe(false);
   });
+
+  it('a paused download is not active and keeps its progress; resuming starts a new run', () => {
+    let s = run([
+      { type: 'state', state: 'downloading' },
+      { type: 'progress', phase: 'depot', depot: 1, percent: 40 },
+      { type: 'prompt', kind: 'guard_device' },
+    ]);
+    s = reduce(s, { type: 'state', state: 'paused' });
+    expect(isActive(s.phase)).toBe(false);
+    expect(s.depots).toEqual({ 1: 40 });
+    expect(s.prompt).toBeNull();
+    s = reduce(s, { type: 'state', state: 'fetching_tool' });
+    expect(s.depots).toEqual({});
+    expect(isActive(s.phase)).toBe(true);
+  });
 });

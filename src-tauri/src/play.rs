@@ -220,6 +220,7 @@ mod tests {
             instance_port: Some(6112),
             gateway_region: Some("Local".into()),
             uptime_secs: 1,
+            motd: None,
         }
     }
 

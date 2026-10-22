@@ -2,9 +2,10 @@
   import { app } from '../lib/app.svelte';
   import { ipc } from '../lib/ipc';
   import { run } from '../lib/notify.svelte';
+  import { onMount } from 'svelte';
   import { formatBytes } from '../lib/format';
+  import { formatEta, formatSpeed, installBytesDone, installBytesTotal } from '../lib/transfer';
   import { isActive, promptText, validGuardCode } from '../lib/install';
-  import PageHead from '../lib/ui/PageHead.svelte';
   import Icon from '../lib/ui/Icon.svelte';
   import Chip from '../lib/ui/Chip.svelte';
   import Spinner from '../lib/ui/Spinner.svelte';
@@ -21,6 +22,21 @@
   const st = $derived(app.status);
   const ins = $derived(app.install);
   const active = $derived(isActive(ins.phase) || (st?.running ?? false));
+  const paused = $derived(ins.phase === 'paused' || (st?.paused != null && !active));
+  const space = $derived(app.space);
+  const rate = app.installRate;
+  const total = $derived(st ? installBytesTotal(st.depots) : 0);
+  const doneBytes = $derived(st ? installBytesDone(st.depots, ins.depots) : 0);
+  const overall = $derived(total > 0 ? Math.min(100, (doneBytes / total) * 100) : null);
+  const noRoom = $derived(space !== null && !space.ok);
+
+  onMount(() => void app.refreshSpace());
+  // The folder or the version changed, or a download ended: look at the disk again.
+  $effect(() => {
+    void st?.install_dir;
+    void ins.phase;
+    void app.refreshSpace();
+  });
 
   $effect(() => {
     void ins.log.length;
@@ -48,6 +64,15 @@
     }
   }
 
+  async function pause() {
+    await run(() => ipc.installPause());
+  }
+
+  async function resume() {
+    const ok = await run(() => ipc.installResume(password));
+    if (ok !== undefined) password = '';
+  }
+
   async function verify() {
     await run(() => ipc.installVerify());
   }
@@ -56,14 +81,13 @@
   const label = $derived(versionLabel(app.version));
 </script>
 
-<PageHead
-  icon="install"
-  title="Install"
-  sub={st ? (app.official ? `Official build (Steam app ${st.app_id}), into ${st.install_dir}` : `Client ${st.version} (Steam app ${st.app_id}), into ${st.install_dir}`) : ''}
->
-  {#if st?.installed}<Chip tone="ok" icon="check">installed</Chip>{:else}<Chip>not installed</Chip>{/if}
-  <button type="button" class="btn" onclick={verify} disabled={!st?.installed || active}><Icon name="shield" size={14} /> Verify files</button>
-</PageHead>
+<div class="sechead">
+  <p class="muted">{st ? (app.official ? `Official build (Steam app ${st.app_id}), into ${st.install_dir}` : `Client ${st.version} (Steam app ${st.app_id}), into ${st.install_dir}`) : ''}</p>
+  <div class="toolbar">
+    {#if st?.installed}<Chip tone="ok" icon="check">installed</Chip>{:else}<Chip>not installed</Chip>{/if}
+    <button type="button" class="btn" onclick={verify} disabled={!st?.installed || active}><Icon name="shield" size={14} /> Verify files</button>
+  </div>
+</div>
 
 {#if app.official}
   <div class="notice accent">
@@ -101,15 +125,31 @@
         <input type="checkbox" bind:checked={remember} disabled={active} />
         <span>Remember the Steam login <span class="hint">(DepotDownloader keeps a login token of its own, not your password; forget it in Settings)</span></span>
       </label>
+      {#if space}
+        <div class="space" class:bad={!space.ok}>
+          <Icon name={space.ok ? 'database' : 'alert'} size={15} />
+          <span>{space.message}</span>
+        </div>
+      {/if}
       <div class="actions">
-        <button type="button" class="btn" onclick={() => start(true)} disabled={active || !username.trim()} title="Check the files that are already there and fetch what differs">
-          Repair
-        </button>
-        <button class="btn primary" type="submit" disabled={active || !username.trim()}>
-          {#if active}<Spinner size={14} />{/if}
-          {st?.installed ? 'Download again' : 'Install'} {label}
-        </button>
-        {#if active}<button class="btn danger" type="button" onclick={() => run(() => ipc.installCancel())}>Cancel</button>{/if}
+        {#if paused}
+          <button class="btn danger" type="button" onclick={() => run(() => ipc.installCancel())}>Forget the pause</button>
+          <button class="btn primary" type="button" onclick={resume} disabled={!username.trim() || noRoom}>
+            <Icon name="play" size={14} filled /> Resume download
+          </button>
+        {:else}
+          <button type="button" class="btn" onclick={() => start(true)} disabled={active || !username.trim() || noRoom} title="Check the files that are already there and fetch what differs">
+            Repair
+          </button>
+          <button class="btn primary" type="submit" disabled={active || !username.trim() || noRoom}>
+            {#if active}<Spinner size={14} />{/if}
+            {st?.installed ? 'Download again' : 'Install'} {label}
+          </button>
+          {#if ins.phase === 'downloading'}
+            <button class="btn" type="button" onclick={pause} title="Stops DepotDownloader. What is on disk stays; Resume carries on from it."><Icon name="pause" size={14} /> Pause</button>
+          {/if}
+          {#if active}<button class="btn danger" type="button" onclick={() => run(() => ipc.installCancel())}>Cancel</button>{/if}
+        {/if}
       </div>
     </form>
     {#if st}
@@ -126,7 +166,8 @@
   <section class="card">
     <div class="card-head"><span class="head-icon"><Icon name="refresh" size={16} /></span><h2>Progress</h2></div>
     <p>
-      {#if ins.phase === 'idle'}<span class="muted">Nothing running.</span>
+      {#if paused && !active}<Chip tone="warn" icon="pause">Paused</Chip> <span class="muted">Resume carries on from what is on disk and checks it first.</span>
+      {:else if ins.phase === 'idle'}<span class="muted">Nothing running.</span>
       {:else if ins.phase === 'fetching_tool'}<Spinner size={14} /> Fetching DepotDownloader...
       {:else if ins.phase === 'downloading'}<Spinner size={14} /> Downloading from Steam...
       {:else if ins.phase === 'verifying'}<Spinner size={14} /> Verifying the install...
@@ -140,6 +181,18 @@
         <Progress value={toolPct} />
         <span class="num">{formatBytes(ins.tool.done)}</span>
       </div>
+    {/if}
+    {#if overall !== null && (ins.phase === 'downloading' || paused) && Object.keys(ins.depots).length > 0}
+      <div class="progrow total">
+        <span><b>Total</b> <span class="muted">(estimate)</span></span>
+        <Progress value={overall} active={ins.phase === 'downloading'} />
+        <span class="num">{overall.toFixed(1)}%</span>
+      </div>
+      <p class="rate">
+        <span><b>{formatSpeed(rate.bps)}</b></span>
+        <span>{#if ins.phase === 'downloading'}{formatEta(rate.etaSecs)} left{:else}paused{/if}</span>
+        <span class="muted">about {formatBytes(doneBytes)} of {formatBytes(total)}</span>
+      </p>
     {/if}
     {#each st?.depots ?? [] as d (d.id)}
       {#if d.id in ins.depots}
@@ -198,3 +251,12 @@
     {#if ins.log.length === 0}<span class="muted">The downloader's output appears here.</span>{/if}
   </div>
 </section>
+
+<style>
+  .sechead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin-bottom: 16px; }
+  .sechead p { margin: 0; overflow-wrap: anywhere; min-width: 0; flex: 1 1 300px; }
+  .space { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg-2); border: 1px solid var(--line-soft); font-size: 12.5px; color: var(--muted); }
+  .space.bad { color: var(--text); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: var(--danger-bg); }
+  .rate { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 2px 0 12px; font-variant-numeric: tabular-nums; }
+  .progrow.total { margin-top: 4px; }
+</style>

@@ -22,7 +22,7 @@ use crate::{
     play::{self, PlayConfig},
     profiles::{PlainHttp, Profile, ProfileStore, needs_plain_http_confirmation, plain_http},
     settings::Settings,
-    steam,
+    space, steam,
     verify::{self, VerifyReport},
     version::{OFFICIAL, VersionFile},
 };
@@ -94,6 +94,11 @@ pub struct InstallStatus {
     pub tool_version: String,
     pub tool_ready: bool,
     pub depots: Vec<DepotView>,
+    /// The estimated size of a whole install (0 = unknown): the overall progress, speed and time
+    /// left are worked out from it.
+    pub required_bytes: u64,
+    /// A download that was paused and can be resumed.
+    pub paused: Option<PausedInstall>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -101,6 +106,16 @@ pub struct DepotView {
     pub id: u32,
     pub manifest: String,
     pub role: String,
+    /// What the depot weighs in the overall progress (estimate).
+    pub est_bytes: u64,
+}
+
+/// A paused download: what it needs to be started again. The password is not kept.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PausedInstall {
+    pub version: String,
+    pub steam_username: String,
+    pub remember_login: bool,
 }
 
 #[derive(Clone, Deserialize)]
@@ -129,6 +144,8 @@ impl std::fmt::Debug for InstallRequest {
 struct InstallControl {
     input: mpsc::UnboundedSender<String>,
     cancel: watch::Sender<bool>,
+    /// The cancel is a pause: the download is stopped but can be resumed.
+    pause: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -160,6 +177,7 @@ pub struct Core {
     pub tokens: Arc<dyn TokenStore>,
     pub events: Arc<dyn Events>,
     install: Mutex<Option<InstallControl>>,
+    paused: Mutex<Option<PausedInstall>>,
     play: Mutex<PlayState>,
     /// The hosted `poe-server` process (see `host_ops.rs`).
     pub host: HostRuntime,
@@ -180,6 +198,7 @@ impl Core {
             tokens,
             events,
             install: Mutex::new(None),
+            paused: Mutex::new(None),
             play: Mutex::new(PlayState::Idle),
             host: HostRuntime::new(),
             host_busy: Mutex::new(false),
@@ -378,7 +397,7 @@ impl Core {
         Ok(())
     }
 
-    fn client_for(&self, id: &str) -> Result<(Profile, ApiClient)> {
+    pub(crate) fn client_for(&self, id: &str) -> Result<(Profile, ApiClient)> {
         let p = self.profile_store().get(id)?;
         let c = ApiClient::new(&p.url);
         Ok((p, c))
@@ -530,7 +549,16 @@ impl Core {
             d.join(&a.exe).is_file()
         });
         let version = self.version();
+        let weights = space::depot_weights(&version);
+        let paused = self
+            .paused
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|p| p.version == version.version && !self.install_running());
         Ok(InstallStatus {
+            required_bytes: space::estimated_install_bytes(&version),
+            paused,
             installed: verify::looks_installed(&dir, &version),
             version: version.version.clone(),
             app_id: version.app_id,
@@ -541,10 +569,12 @@ impl Core {
             depots: version
                 .depots
                 .iter()
-                .map(|d| DepotView {
+                .zip(weights)
+                .map(|(d, est_bytes)| DepotView {
                     id: d.id,
                     manifest: d.manifest.clone(),
                     role: d.role.clone(),
+                    est_bytes,
                 })
                 .collect(),
         })
@@ -568,6 +598,7 @@ impl Core {
         let settings = self.settings()?;
         let (itx, irx) = mpsc::unbounded_channel();
         let (ctx, crx) = watch::channel(false);
+        let pause = Arc::new(std::sync::atomic::AtomicBool::new(false));
         {
             let mut slot = self.install.lock().unwrap();
             if slot.is_some() {
@@ -576,11 +607,13 @@ impl Core {
             *slot = Some(InstallControl {
                 input: itx,
                 cancel: ctx,
+                pause: pause.clone(),
             });
         }
+        *self.paused.lock().unwrap() = None;
         let core = self.clone();
         tokio::spawn(async move {
-            let result = core.run_install(req, dir, settings, irx, crx).await;
+            let result = core.run_install(req, dir, settings, irx, crx, pause).await;
             *core.install.lock().unwrap() = None;
             match result {
                 Ok(()) => {}
@@ -595,14 +628,66 @@ impl Core {
         Ok(())
     }
 
+    /// Pauses the download: DepotDownloader is stopped (what is on disk stays) and the state
+    /// becomes `paused`. [`Self::install_resume`] starts it again with the same arguments.
+    pub fn install_pause(&self) -> Result<()> {
+        let slot = self.install.lock().unwrap();
+        let c = slot
+            .as_ref()
+            .ok_or_else(|| anyhow!("no install is running"))?;
+        c.pause.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = c.cancel.send(true);
+        Ok(())
+    }
+
+    /// Continues a paused download: the same run again, with `-validate`, so DepotDownloader
+    /// checks the files that are on disk and fetches only what is missing or incomplete. The
+    /// password is asked again unless the Steam login is remembered.
+    pub fn install_resume(self: &Arc<Self>, steam_password: String) -> Result<()> {
+        let p = self
+            .paused
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|p| p.version == self.version().version)
+            .ok_or_else(|| anyhow!("there is no paused download to resume"))?;
+        self.install_start(InstallRequest {
+            steam_username: p.steam_username,
+            steam_password,
+            remember_login: p.remember_login,
+            validate: true,
+        })
+    }
+
+    /// The disk-space check for installing the selected version into its folder.
+    pub async fn install_space(&self) -> Result<space::SpaceCheck> {
+        let dir = self.install_dir()?;
+        let version = self.version();
+        Ok(tokio::task::spawn_blocking(move || space::check(&dir, &version)).await?)
+    }
+
     async fn run_install(
         self: &Arc<Self>,
-        req: InstallRequest,
+        mut req: InstallRequest,
         dir: PathBuf,
         settings: Settings,
         input: mpsc::UnboundedReceiver<String>,
         cancel: watch::Receiver<bool>,
+        pause: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<()> {
+        // A cancel is either the Cancel button or the Pause button.
+        let stopped = |core: &Arc<Self>, req: &InstallRequest| {
+            if pause.load(std::sync::atomic::Ordering::SeqCst) {
+                *core.paused.lock().unwrap() = Some(PausedInstall {
+                    version: core.version().version,
+                    steam_username: req.steam_username.trim().to_owned(),
+                    remember_login: req.remember_login,
+                });
+                core.emit("install:state", json!({"state": "paused"}));
+            } else {
+                core.emit("install:state", json!({"state": "cancelled"}));
+            }
+        };
         self.emit("install:state", json!({"state": "fetching_tool"}));
         let pin = ToolPin::embedded()?;
         let events = self.events.clone();
@@ -614,12 +699,18 @@ impl Core {
         })
         .await?;
         if *cancel.borrow() {
-            self.emit("install:state", json!({"state": "cancelled"}));
+            stopped(self, &req);
             return Ok(());
         }
 
         tokio::fs::create_dir_all(&dir).await?;
-        self.check_free_space(&dir)?;
+        let space = {
+            let (d, v) = (dir.clone(), self.version());
+            tokio::task::spawn_blocking(move || space::check(&d, &v)).await?
+        };
+        if !space.ok {
+            bail!("{}", space.message);
+        }
         let job = DownloadJob {
             version: self.version(),
             dir: dir.clone(),
@@ -629,7 +720,8 @@ impl Core {
             validate: req.validate,
         };
         let args = depot::depot_args(&job);
-        let password = (!req.steam_password.is_empty()).then(|| Secret::new(req.steam_password));
+        let password = (!req.steam_password.is_empty())
+            .then(|| Secret::new(std::mem::take(&mut req.steam_password)));
         self.emit("install:state", json!({"state": "downloading"}));
 
         let (etx, mut erx) = mpsc::unbounded_channel();
@@ -665,7 +757,7 @@ impl Core {
         let _ = pump.await;
         match outcome? {
             Outcome::Cancelled => {
-                self.emit("install:state", json!({"state": "cancelled"}));
+                stopped(self, &req);
                 Ok(())
             }
             Outcome::Failed { reason, .. } => bail!("{reason}"),
@@ -691,26 +783,6 @@ impl Core {
         }
     }
 
-    fn check_free_space(&self, dir: &std::path::Path) -> Result<()> {
-        let needed = self.version().verify.min_bytes;
-        if needed == 0 {
-            return Ok(());
-        }
-        let have_already = verify::scan(dir).map(|(_, b)| b).unwrap_or(0);
-        let missing = needed.saturating_sub(have_already);
-        if let Ok(free) = fs4::available_space(dir)
-            && free < missing
-        {
-            bail!(
-                "not enough free space in {}: about {} are needed, {} are free",
-                dir.display(),
-                verify::human(missing),
-                verify::human(free)
-            );
-        }
-        Ok(())
-    }
-
     /// Answers a Steam Guard prompt.
     pub fn install_input(&self, text: &str) -> Result<()> {
         let slot = self.install.lock().unwrap();
@@ -724,9 +796,17 @@ impl Core {
 
     pub fn install_cancel(&self) -> Result<()> {
         let slot = self.install.lock().unwrap();
-        let c = slot
-            .as_ref()
-            .ok_or_else(|| anyhow!("no install is running"))?;
+        let Some(c) = slot.as_ref() else {
+            // Not running: cancelling a paused download forgets it (the files stay).
+            drop(slot);
+            if self.paused.lock().unwrap().take().is_some() {
+                self.emit("install:state", json!({"state": "cancelled"}));
+                return Ok(());
+            }
+            bail!("no install is running");
+        };
+        // A Cancel after a Pause request wins.
+        c.pause.store(false, std::sync::atomic::Ordering::SeqCst);
         let _ = c.cancel.send(true);
         Ok(())
     }

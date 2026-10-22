@@ -11,28 +11,25 @@
   import Chip from './lib/ui/Chip.svelte';
   import Toasts from './lib/ui/Toasts.svelte';
   import ConfirmDialog from './lib/ui/ConfirmDialog.svelte';
+  import Home from './pages/Home.svelte';
   import Servers from './pages/Servers.svelte';
-  import Account from './pages/Account.svelte';
-  import Install from './pages/Install.svelte';
-  import Mods from './pages/Mods.svelte';
+  import Library from './pages/Library.svelte';
   import Host from './pages/Host.svelte';
   import Settings from './pages/Settings.svelte';
   import About from './pages/About.svelte';
 
   interface NavItem { page: string; label: string; icon: IconName; official: boolean }
   const nav: NavItem[] = [
+    { page: 'home', label: 'Home', icon: 'home', official: true },
     { page: 'servers', label: 'Servers', icon: 'servers', official: false },
-    { page: 'account', label: 'Account', icon: 'account', official: false },
-    { page: 'install', label: 'Install', icon: 'install', official: true },
-    { page: 'host', label: 'Host a server', icon: 'host', official: false },
-    { page: 'mods', label: 'Mods', icon: 'mods', official: false },
+    { page: 'host', label: 'Host', icon: 'host', official: false },
+    { page: 'library', label: 'Library', icon: 'library', official: true },
     { page: 'settings', label: 'Settings', icon: 'settings', official: true },
-    { page: 'about', label: 'About', icon: 'info', official: true },
   ];
   const visible = $derived(nav.filter((n) => !app.official || n.official));
-  const page = $derived(visible.some((n) => n.page === router.page) ? router.page : (visible[0]?.page ?? 'servers'));
-  // The official mode has no servers or mods: it opens on the install page.
-  const landing = $derived(app.official ? 'install' : 'servers');
+  // About is not in the sidebar: it is the small link at its foot (and in Settings).
+  const page = $derived(router.page === 'about' || visible.some((n) => n.page === router.page) ? router.page : 'home');
+  const landing = 'home';
 
   let maximized = $state(false);
   let fullscreen = $state(false);
@@ -100,12 +97,12 @@
   <div class="body">
     <nav class="side" aria-label="Main">
       {#each visible as n (n.page)}
-        {#if n.page === 'about'}<span class="spacer"></span>{/if}
         <a href={'#/' + n.page} aria-current={page === n.page ? 'page' : undefined}>
           <Icon name={n.icon} size={18} />
           <span class="label">{n.label}</span>
         </a>
       {/each}
+      <span class="spacer"></span>
       {#if app.official}
         <div class="side-card official">
           <strong><Icon name="eye" size={14} /> Official mode</strong>
@@ -117,6 +114,9 @@
           <span class="muted">on {app.selected.name}</span>
         </div>
       {/if}
+      <a class="about-link" href="#/about" aria-current={page === 'about' ? 'page' : undefined}>
+        <Icon name="info" size={14} /> <span class="label">About {app.info?.launcher_version ? `· v${app.info.launcher_version}` : ''}</span>
+      </a>
     </nav>
     <main id="main" tabindex="-1">
       {#if !app.ready}
@@ -124,16 +124,14 @@
       {:else}
         {#key page + app.version}
           <div class="page">
-            {#if page === 'servers'}
+            {#if page === 'home'}
+              <Home />
+            {:else if page === 'servers'}
               <Servers />
-            {:else if page === 'account'}
-              <Account />
-            {:else if page === 'install'}
-              <Install />
+            {:else if page === 'library'}
+              <Library />
             {:else if page === 'host'}
               <Host />
-            {:else if page === 'mods'}
-              <Mods />
             {:else if page === 'about'}
               <About />
             {:else}
@@ -144,6 +142,8 @@
       {/if}
     </main>
   </div>
+  <!-- Home has its own big Play button and the status; the bar is for the other pages. -->
+  {#if page !== 'home'}
   <footer class="playbar">
     {#if app.official}
       <Chip tone="warn" icon="eye">Official servers (read-only)</Chip>
@@ -181,6 +181,7 @@
       {#if busy}<Spinner size={18} label="Starting" /> Starting{:else if running}<Icon name="check" size={18} /> Running{:else}<Icon name="play" size={18} filled /> Play{/if}
     </button>
   </footer>
+  {/if}
 </div>
 <Toasts />
 <ConfirmDialog />

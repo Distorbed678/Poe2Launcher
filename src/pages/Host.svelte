@@ -5,7 +5,10 @@
   import { ipc } from '../lib/ipc';
   import { run, toasts } from '../lib/notify.svelte';
   import { listenHost, type HostProgress } from '../lib/events';
-  import { formatBytes } from '../lib/format';
+  import { formatBytes, formatDateTime } from '../lib/format';
+  import { formatEta, formatSpeed } from '../lib/transfer';
+  import { RateTracker } from '../lib/rate.svelte';
+  import { ask } from '../lib/confirm.svelte';
   import {
     formFromSettings, isUp, logLevel, playerAddress, portsToForward, pushLog, runLabel, settingsFromForm,
     validateHostForm, type HostForm,
@@ -16,7 +19,7 @@
   import Empty from '../lib/ui/Empty.svelte';
   import Spinner from '../lib/ui/Spinner.svelte';
   import Progress from '../lib/ui/Progress.svelte';
-  import type { HostStatus, InstallOutcome, RunState } from '../lib/types';
+  import type { BackupStatus, HostStatus, InstallOutcome, RunState } from '../lib/types';
 
   let status = $state<HostStatus | null>(null);
   let form = $state<HostForm | null>(null);
@@ -27,6 +30,10 @@
   let pkgError = $state('');
   let outcome = $state<InstallOutcome | null>(null);
   let ipNote = $state('');
+  const dlRate = new RateTracker();
+  let backups = $state<BackupStatus | null>(null);
+  let backupBusy = $state<'' | 'create' | 'restore' | 'delete' | 'settings'>('');
+  let keepText = $state('5');
   let logEl: HTMLElement | undefined = $state();
   let timer: ReturnType<typeof setInterval> | undefined;
   let unlisten: (() => void) | undefined;
@@ -59,14 +66,21 @@
         if (status) status = { ...status, run: s, info: s.state === 'running' ? status.info : null };
       },
       onLog: (line) => (log = pushLog(log, line)),
-      onProgress: (p) => (progress = p),
+      onProgress: (p) => {
+        progress = p;
+        dlRate.feed(p.done, p.total);
+      },
       onStep: (s) => (step = s),
       onInstalled: () => void refresh(),
     });
     log = (await run(() => ipc.hostLogTail(500))) ?? [];
     await refresh();
+    void loadBackups();
     // The "ready" light and a crashed server need a look now and then.
-    timer = setInterval(() => void refresh(), 2500);
+    timer = setInterval(() => {
+      void refresh();
+      if (backups && backups.server_running !== isUp(status?.run ?? { state: 'stopped' })) void loadBackups();
+    }, 2500);
   });
 
   onDestroy(() => {
@@ -81,12 +95,69 @@
     });
   });
 
+  // --- backups ---------------------------------------------------------------------------------
+
+  async function loadBackups() {
+    try {
+      const b = await ipc.backupStatus();
+      backups = b;
+      if (backupBusy !== 'settings') keepText = String(b.settings.keep);
+    } catch (e) {
+      toasts.show('error', e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function backupNow() {
+    backupBusy = 'create';
+    const b = await run(() => ipc.backupCreate(), (r) => `Backup saved (${formatBytes(r.size)})`);
+    backupBusy = '';
+    if (b) await loadBackups();
+  }
+
+  async function restoreBackup(name: string, when: string) {
+    const yes = await ask({
+      title: 'Restore this backup?',
+      message: `The server's database is replaced by the backup from ${when}. Accounts, characters and everything else go back to that moment.\n\nThe current database is backed up first (kind "before restore"), so you can undo this by restoring that one.`,
+      confirmLabel: 'Restore',
+      danger: true,
+    });
+    if (!yes) return;
+    backupBusy = 'restore';
+    const pre = await run(() => ipc.backupRestore(name), (r) => (r ? 'Restored. The previous database was kept as a backup.' : 'Restored.'));
+    backupBusy = '';
+    if (pre !== undefined) await loadBackups();
+  }
+
+  async function deleteBackup(name: string, when: string) {
+    const yes = await ask({ title: 'Delete this backup?', message: `The backup from ${when} is deleted for good.`, confirmLabel: 'Delete', danger: true });
+    if (!yes) return;
+    backupBusy = 'delete';
+    const r = await run(() => ipc.backupDelete(name), 'Backup deleted');
+    backupBusy = '';
+    if (r !== undefined) await loadBackups();
+  }
+
+  async function saveBackupSettings(auto: boolean) {
+    const keep = Math.round(Number(keepText));
+    if (!Number.isFinite(keep) || keep < 1 || keep > 100) {
+      toasts.show('error', 'Keep between 1 and 100 automatic backups');
+      return;
+    }
+    backupBusy = 'settings';
+    const s = await run(() => ipc.backupSetSettings(auto, keep));
+    backupBusy = '';
+    if (s) await loadBackups();
+  }
+
+  const kindLabel = { manual: 'manual', auto: 'before start', 'pre-restore': 'before restore', other: 'other' } as const;
+
   // --- the package ---------------------------------------------------------------------------
 
   async function download() {
     task = 'download';
     pkgError = '';
     progress = null;
+    dlRate.reset();
     outcome = null;
     try {
       outcome = await ipc.hostInstallLatest();
@@ -96,6 +167,7 @@
     }
     task = '';
     progress = null;
+    dlRate.reset();
     await refresh();
   }
 
@@ -231,7 +303,7 @@
         <p class="hint"><Spinner size={12} /> {step || 'Working...'}</p>
         {#if pct !== null && progress?.phase === 'download'}
           <Progress value={pct} />
-          <p class="hint">{formatBytes(progress.done)} of {formatBytes(progress.total)}</p>
+          <p class="hint">{formatBytes(progress.done)} of {formatBytes(progress.total)} · {formatSpeed(dlRate.bps)} · {formatEta(dlRate.etaSecs)} left</p>
         {/if}
       {/if}
       {#if pkgError}<p class="err" role="alert" style="white-space: pre-wrap">{pkgError}</p>{/if}
@@ -253,7 +325,7 @@
       {#if noGame}
         <div class="notice" style="margin-top: 12px">
           <span class="notice-title"><Icon name="alert" size={16} /> The game is not installed</span>
-          <p>The server reads its game data from <code>{status.install_dir}</code>: <a href="#/install">install it first</a>.</p>
+          <p>The server reads its game data from <code>{status.install_dir}</code>: <a href="#/library">install it first</a>.</p>
         </div>
       {/if}
     </section>
@@ -357,9 +429,9 @@
         Start this server when the launcher starts
       </label>
       <p class="hint">
-        The server runs while the launcher is open; closing the launcher stops it.
-        {#if configured}It is listed on the Servers page as <b>{hostProfile?.name ?? status.settings.server_name}</b> (<code>{status.web_url}</code>).{/if}
-        {#if configured && !hostProfile?.logged_in}Log in on the Account page to play on it.{/if}
+        The server runs while the launcher is open; closing the launcher stops it. When an admin restarts it from the web admin, the launcher starts it again by itself.
+        {#if configured}It is listed under Servers as <b>{hostProfile?.name ?? status.settings.server_name}</b> (<code>{status.web_url}</code>).{/if}
+        {#if configured && !hostProfile?.logged_in}Log in on the Servers page to play on it.{/if}
       </p>
       {#if configured && ready}
         <p class="hint">Game address players' clients connect to: <code>{status.info?.login_host}:{status.info?.login_port}</code></p>
@@ -377,6 +449,58 @@
       </div>
       <p class="hint">Also written to <code>{status.log_file}</code> (replaced at each start).</p>
     </section>
+
+    <!-- 5. Backups -->
+    <section class="card">
+      <div class="card-head"><span class="head-icon"><Icon name="database" size={16} /></span><h2>Backups</h2>
+        <span class="grow"></span>
+        <button type="button" class="btn primary" disabled={backupBusy !== '' || !backups?.database_size} onclick={backupNow}
+          title={backups?.database_size ? 'Copies the server database now; works while the server runs' : 'The server has no database yet: start it once'}>
+          {#if backupBusy === 'create'}<Spinner size={14} />{:else}<Icon name="database" size={14} />{/if} Back up now
+        </button>
+      </div>
+      <p class="hint">
+        A backup is a copy of the server's database (accounts and characters). It is made with SQLite's backup function, so it is consistent
+        while the server runs. {#if backups?.database_size}The database is {formatBytes(backups.database_size)}.{:else}There is no database yet.{/if}
+        Backups live in <code>{backups?.dir ?? '...'}</code>.
+      </p>
+      <div class="row" style="margin: 10px 0">
+        <label class="check">
+          <input type="checkbox" checked={backups?.settings.auto ?? false} disabled={backupBusy !== ''} onchange={(e) => saveBackupSettings(e.currentTarget.checked)} />
+          <span>Back up automatically each time the server starts from the launcher</span>
+        </label>
+        <span class="grow"></span>
+        <label class="inline">Keep the last
+          <input class="keep" type="number" min="1" max="100" bind:value={keepText} disabled={backupBusy !== ''} onchange={() => saveBackupSettings(backups?.settings.auto ?? false)} aria-label="Automatic backups to keep" />
+          automatic ones
+        </label>
+      </div>
+      {#if !backups || backups.backups.length === 0}
+        <p class="muted">No backups yet.</p>
+      {:else}
+        <div class="table-wrap">
+          <table>
+            <tbody>
+              {#each backups.backups as b (b.name)}
+                {@const when = formatDateTime(b.created)}
+                <tr>
+                  <td>{when}</td>
+                  <td><Chip tone={b.kind === 'manual' ? 'accent' : b.kind === 'auto' ? 'info' : 'neutral'}>{kindLabel[b.kind]}</Chip></td>
+                  <td class="num">{formatBytes(b.size)}</td>
+                  <td class="num">
+                    <button type="button" class="btn sm" disabled={backupBusy !== '' || backups.server_running} title={backups.server_running ? 'Stop the server first' : 'Replace the database by this backup'} onclick={() => restoreBackup(b.name, when)}>
+                      <Icon name="undo" size={13} /> Restore
+                    </button>
+                    <button type="button" class="btn sm danger" disabled={backupBusy !== ''} aria-label="Delete the backup from {when}" onclick={() => deleteBackup(b.name, when)}><Icon name="trash" size={13} /></button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        {#if backups.server_running}<p class="hint">Restoring needs the server to be stopped.</p>{/if}
+      {/if}
+    </section>
   </div>
 {:else}
   <div class="loading"><Spinner size={20} /> Loading...</div>
@@ -386,4 +510,6 @@
   .log :global(.error) { color: var(--danger); }
   .log :global(.warn) { color: var(--warn); }
   .log :global(.launcher) { color: var(--link); }
+  .inline { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap; }
+  .keep { width: 70px; }
 </style>

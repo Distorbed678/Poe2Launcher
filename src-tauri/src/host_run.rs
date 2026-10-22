@@ -63,6 +63,59 @@ pub struct HostRuntime {
     log: Arc<Mutex<VecDeque<String>>>,
 }
 
+/// Exit code of `poe-server` after an admin's restart request when its config has
+/// `[server] restart_mode = "exit"` (`poe_config::RESTART_EXIT_CODE` in Poe2ModdingProject, a
+/// copy because this repository does not depend on the server crates). The launcher starts the
+/// server again when it sees this code and did not ask it to stop.
+pub const RESTART_EXIT_CODE: i32 = 75;
+/// A crash loop ends: more than this many restart requests within [`RESTART_WINDOW`] are not
+/// answered.
+pub const MAX_RESTARTS: usize = 3;
+pub const RESTART_WINDOW: Duration = Duration::from_secs(30);
+/// How long the server gets after SIGTERM before it is killed. The server's graceful stop
+/// (kick players, save sessions) takes up to about 5 s; this leaves room for a slow disk.
+pub const STOP_GRACE: Duration = Duration::from_secs(15);
+
+/// Allows [`MAX_RESTARTS`] restarts in any [`RESTART_WINDOW`].
+#[derive(Debug, Default)]
+pub struct RestartBudget(VecDeque<Instant>);
+
+impl RestartBudget {
+    /// Records a restart at `now` and says whether it is allowed.
+    pub fn allow(&mut self, now: Instant) -> bool {
+        while self
+            .0
+            .front()
+            .is_some_and(|t| now.duration_since(*t) > RESTART_WINDOW)
+        {
+            self.0.pop_front();
+        }
+        if self.0.len() >= MAX_RESTARTS {
+            return false;
+        }
+        self.0.push_back(now);
+        true
+    }
+}
+
+fn spawn_child(spec: &StartSpec) -> Result<tokio::process::Child> {
+    let mut cmd = Command::new(&spec.exe);
+    cmd.current_dir(&spec.cwd)
+        .env("POE_CONFIG", &spec.config)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        // No console window for the server.
+        cmd.creation_flags(0x0800_0000);
+    }
+    cmd.spawn()
+        .with_context(|| format!("starting {}", spec.exe.display()))
+}
+
 /// Everything needed to start the server.
 #[derive(Debug, Clone)]
 pub struct StartSpec {
@@ -148,24 +201,9 @@ impl HostRuntime {
         ));
         self.log.lock().unwrap().clear();
 
-        let mut cmd = Command::new(&spec.exe);
-        cmd.current_dir(&spec.cwd)
-            .env("POE_CONFIG", &spec.config)
-            .env("NO_COLOR", "1")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        #[cfg(windows)]
-        {
-            // No console window for the server.
-            cmd.creation_flags(0x0800_0000);
-        }
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("starting {}", spec.exe.display()))?;
+        let mut child = spawn_child(spec)?;
         let pid = child.id().context("the server ended at once")?;
-        let (stop_tx, stop_rx) = oneshot::channel::<()>();
+        let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
         self.inner.lock().unwrap().live = Some(Live {
             pid,
             stop: Some(stop_tx),
@@ -176,47 +214,89 @@ impl HostRuntime {
             &format!("started {} (pid {pid})", spec.exe.display()),
         );
 
-        let readers = [
-            child
-                .stdout
-                .take()
-                .map(|s| self.spawn_reader(s, events.clone(), file.clone())),
-            child
-                .stderr
-                .take()
-                .map(|s| self.spawn_reader(s, events.clone(), file.clone())),
-        ];
         let rt = self.clone();
+        let spec = spec.clone();
         tokio::spawn(async move {
-            let mut stopping = false;
-            let status = tokio::select! {
-                s = child.wait() => s,
-                _ = stop_rx => {
-                    stopping = true;
-                    rt.set_state(events.as_ref(), RunState::Stopping { pid });
-                    terminate(&mut child, pid).await
+            let mut pid = pid;
+            let mut budget = RestartBudget::default();
+            loop {
+                let readers = [
+                    child
+                        .stdout
+                        .take()
+                        .map(|s| rt.spawn_reader(s, events.clone(), file.clone())),
+                    child
+                        .stderr
+                        .take()
+                        .map(|s| rt.spawn_reader(s, events.clone(), file.clone())),
+                ];
+                let mut stopping = false;
+                let status = tokio::select! {
+                    s = child.wait() => s,
+                    _ = &mut stop_rx => {
+                        stopping = true;
+                        rt.set_state(events.as_ref(), RunState::Stopping { pid });
+                        terminate(&mut child, pid).await
+                    }
+                };
+                for r in readers.into_iter().flatten() {
+                    let _ = tokio::time::timeout(Duration::from_secs(2), r).await;
                 }
-            };
-            for r in readers.into_iter().flatten() {
-                let _ = tokio::time::timeout(Duration::from_secs(2), r).await;
+                let code = status.ok().and_then(|s| s.code());
+                rt.note(
+                    events.as_ref(),
+                    &format!(
+                        "the server ended (exit code {})",
+                        code.map_or("none".to_owned(), |c| c.to_string())
+                    ),
+                );
+                // An admin's restart (`restart_mode = "exit"`): start the same server again.
+                if !stopping && code == Some(RESTART_EXIT_CODE) {
+                    if !budget.allow(Instant::now()) {
+                        rt.note(
+                            events.as_ref(),
+                            &format!(
+                                "the server asked for a restart more than {MAX_RESTARTS} times \
+                                 within {} seconds; not starting it again",
+                                RESTART_WINDOW.as_secs()
+                            ),
+                        );
+                    } else {
+                        rt.note(events.as_ref(), "the server asked for a restart");
+                        match spawn_child(&spec).and_then(|c| {
+                            let p = c.id().context("the server ended at once")?;
+                            Ok((c, p))
+                        }) {
+                            Ok((c, p)) => {
+                                child = c;
+                                pid = p;
+                                if let Some(l) = rt.inner.lock().unwrap().live.as_mut() {
+                                    l.pid = p;
+                                }
+                                rt.set_state(events.as_ref(), RunState::Running { pid });
+                                rt.note(events.as_ref(), &format!("restarted (pid {pid})"));
+                                continue;
+                            }
+                            Err(e) => {
+                                rt.note(
+                                    events.as_ref(),
+                                    &format!("could not restart the server: {e:#}"),
+                                );
+                            }
+                        }
+                    }
+                }
+                rt.inner.lock().unwrap().live = None;
+                rt.set_state(
+                    events.as_ref(),
+                    if stopping {
+                        RunState::Stopped
+                    } else {
+                        RunState::Exited { code }
+                    },
+                );
+                break;
             }
-            let code = status.ok().and_then(|s| s.code());
-            rt.inner.lock().unwrap().live = None;
-            rt.note(
-                events.as_ref(),
-                &format!(
-                    "the server ended (exit code {})",
-                    code.map_or("none".to_owned(), |c| c.to_string())
-                ),
-            );
-            rt.set_state(
-                events.as_ref(),
-                if stopping {
-                    RunState::Stopped
-                } else {
-                    RunState::Exited { code }
-                },
-            );
         });
         Ok(pid)
     }
@@ -273,7 +353,8 @@ impl HostRuntime {
     }
 }
 
-/// SIGTERM (a polite stop), then a hard kill after a few seconds. On Windows a hard kill.
+/// SIGTERM (a polite stop; the server then kicks its players and saves their sessions, up to
+/// about 5 s), then a hard kill after [`STOP_GRACE`]. On Windows a hard kill.
 async fn terminate(
     child: &mut tokio::process::Child,
     pid: u32,
@@ -282,7 +363,7 @@ async fn terminate(
     {
         // SAFETY: plain kill(2) on the pid of our own child.
         unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
-        if let Ok(r) = tokio::time::timeout(Duration::from_secs(8), child.wait()).await {
+        if let Ok(r) = tokio::time::timeout(STOP_GRACE, child.wait()).await {
             return r;
         }
     }
@@ -296,7 +377,7 @@ fn kill_blocking(pid: u32) {
     // SAFETY: kill(2) on a pid we spawned; signal 0 only probes.
     unsafe {
         libc::kill(pid as libc::pid_t, libc::SIGTERM);
-        for _ in 0..30 {
+        for _ in 0..(STOP_GRACE.as_millis() / 100) {
             if libc::kill(pid as libc::pid_t, 0) != 0 {
                 return;
             }
@@ -515,5 +596,164 @@ mod tests {
             .to_string();
         assert!(e.contains("poe-server fail failed"), "{e}");
         assert!(e.contains("args=1"), "{e}");
+    }
+
+    #[test]
+    fn the_restart_budget_ends_a_crash_loop() {
+        let mut b = RestartBudget::default();
+        let t0 = Instant::now();
+        assert!(b.allow(t0));
+        assert!(b.allow(t0 + Duration::from_secs(5)));
+        assert!(b.allow(t0 + Duration::from_secs(10)));
+        assert!(
+            !b.allow(t0 + Duration::from_secs(11)),
+            "a fourth within 30 s"
+        );
+        assert!(!b.allow(t0 + Duration::from_secs(29)));
+        // The first one has left the window: one more is fine, then it is full again.
+        assert!(b.allow(t0 + Duration::from_secs(31)));
+        assert!(!b.allow(t0 + Duration::from_secs(32)));
+        // A server that is restarted now and then (an admin every few minutes) is never refused.
+        let mut b = RestartBudget::default();
+        for k in 0..20 {
+            assert!(b.allow(t0 + Duration::from_secs(k * 60)));
+        }
+    }
+
+    async fn wait_for(rt: &HostRuntime, f: impl Fn(&RunState) -> bool) {
+        for _ in 0..200 {
+            if f(&rt.state()) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("state {:?} never reached", rt.state());
+    }
+
+    /// A fake server that asks for a restart (exit 75) on its first `n` runs, then runs on.
+    #[cfg(unix)]
+    fn restarting(dir: &Path, n: u32, then: &str) -> StartSpec {
+        let counter = dir.join("runs");
+        let exe = script(
+            dir,
+            &format!(
+                "c=$(cat '{c}' 2>/dev/null || echo 0); c=$((c+1)); echo $c > '{c}'; echo \"run $c\"; \
+                 if [ $c -le {n} ]; then exit 75; fi; {then}",
+                c = counter.display()
+            ),
+        );
+        StartSpec {
+            exe,
+            cwd: dir.to_path_buf(),
+            config: "c.toml".into(),
+            log_file: dir.join("s.log"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_exit_75_starts_the_server_again_with_the_same_spec() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spec = restarting(tmp.path(), 1, "exec sleep 30");
+        let rt = HostRuntime::new();
+        let events = Arc::new(Collector::default());
+        let first = rt.start(events.clone(), &spec).unwrap();
+        // The second run is up, with another pid, and the state says Running throughout.
+        wait_for(
+            &rt,
+            |s| matches!(s, RunState::Running { pid } if *pid != first),
+        )
+        .await;
+        let RunState::Running { pid: second } = rt.state() else {
+            unreachable!()
+        };
+        assert_eq!(rt.pid(), Some(second));
+        let tail = rt.tail(50).join("\n");
+        assert!(tail.contains("run 1") && tail.contains("run 2"), "{tail}");
+        assert!(tail.contains("the server asked for a restart"), "{tail}");
+        {
+            let ev = events.0.lock().unwrap();
+            let running = ev
+                .iter()
+                .filter(|(n, v)| n == "host:status" && v["state"] == "running")
+                .count();
+            assert_eq!(running, 2, "Running is announced again with the new pid");
+            assert!(
+                !ev.iter()
+                    .any(|(n, v)| n == "host:status" && v["state"] == "exited")
+            );
+        }
+        // The log file continues in one file.
+        let log = std::fs::read_to_string(tmp.path().join("s.log")).unwrap();
+        assert!(log.contains("run 1") && log.contains("run 2"), "{log}");
+        // Stop still works on the new process and ends in Stopped, not in another restart.
+        rt.stop(Duration::from_secs(10)).await.unwrap();
+        assert_eq!(rt.state(), RunState::Stopped);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_restart_loop_ends_in_exited_75() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spec = restarting(tmp.path(), 1000, "true");
+        let rt = HostRuntime::new();
+        rt.start(Arc::new(NullEvents), &spec).unwrap();
+        wait_for(&rt, |s| matches!(s, RunState::Exited { .. })).await;
+        assert_eq!(
+            rt.state(),
+            RunState::Exited {
+                code: Some(RESTART_EXIT_CODE)
+            }
+        );
+        // The first run plus MAX_RESTARTS restarts, no more.
+        let runs: u32 = std::fs::read_to_string(tmp.path().join("runs"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(runs as usize, 1 + MAX_RESTARTS);
+        let tail = rt.tail(100).join("\n");
+        assert!(tail.contains("not starting it again"), "{tail}");
+        assert!(rt.pid().is_none());
+        // It can be started by hand again.
+        std::fs::write(tmp.path().join("runs"), "5000").unwrap();
+        rt.start(Arc::new(NullEvents), &spec).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn other_exit_codes_and_requested_stops_are_not_restarted() {
+        let tmp = tempfile::tempdir().unwrap();
+        // 75 only counts when the server was not asked to stop: a stop that the server answers
+        // with 75 (it would not) ends in Stopped. Exit 0 and 1 are plain ends.
+        let exe = script(
+            tmp.path(),
+            "trap 'exit 75' TERM; echo ready; while true; do sleep 0.1; done",
+        );
+        let spec = StartSpec {
+            exe,
+            cwd: tmp.path().into(),
+            config: "c".into(),
+            log_file: tmp.path().join("l"),
+        };
+        let rt = HostRuntime::new();
+        rt.start(Arc::new(NullEvents), &spec).unwrap();
+        for _ in 0..100 {
+            if rt.tail(5).iter().any(|l| l == "ready") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        rt.stop(Duration::from_secs(10)).await.unwrap();
+        assert_eq!(rt.state(), RunState::Stopped);
+        assert!(
+            !rt.tail(50)
+                .iter()
+                .any(|l| l.contains("asked for a restart"))
+        );
+        let spec1 = restarting(tmp.path(), 0, "exit 1");
+        rt.start(Arc::new(NullEvents), &spec1).unwrap();
+        wait_for(&rt, |s| matches!(s, RunState::Exited { .. })).await;
+        assert_eq!(rt.state(), RunState::Exited { code: Some(1) });
     }
 }

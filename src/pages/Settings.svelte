@@ -120,7 +120,7 @@
             <button type="button" class="btn" onclick={() => pick('dll_dir')}>Browse</button>
           </div>
           <span class="hint">
-            Leave empty: the launcher downloads the client hook itself (Install page) and uses that. Set this only to use your own build of
+            Leave empty: the launcher downloads the client hook itself (Library, Game) and uses that. Set this only to use your own build of
             Poe2ClientHook (a folder holding poe_hook.dll and poe_hook_core.dll, e.g. modules/client-hook/target/x86_64-pc-windows-msvc/release);
             it then wins over the downloaded hook.
             {#if app.hook}Now using: <b>{app.hook.source.kind === 'downloaded' ? `downloaded ${app.hook.source.version}` : app.hook.source.kind === 'manual' ? 'your directory' : app.hook.source.kind === 'legacy' ? 'files in the default folder' : 'nothing yet'}</b>.{/if}
@@ -154,7 +154,7 @@
           Logging out deletes it and forgets the account name; your Steam client is not touched.
         </p>
         <div style="margin-top: 12px"></div>
-        <Switch bind:checked={draft.remember_steam_login}>Remember the Steam login <small>Also available on the Install page.</small></Switch>
+        <Switch bind:checked={draft.remember_steam_login}>Remember the Steam login <small>Also available in the Library.</small></Switch>
         <div class="actions" style="justify-content: flex-start">
           <button type="button" class="btn danger" disabled={steamBusy || !(steam?.remembered || app.settings?.steam_username)} onclick={steamLogout}>
             {#if steamBusy}<Spinner size={14} />{:else}<Icon name="logout" size={14} />{/if} Log out of Steam

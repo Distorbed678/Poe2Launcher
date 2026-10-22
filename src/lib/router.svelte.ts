@@ -20,6 +20,14 @@ export function hrefFor(path: string, query?: Record<string, string | undefined>
   return `#/${path.replace(/^\/+/, '')}${qs ? `?${qs}` : ''}`;
 }
 
+/** Pages that were merged into others keep working as links (`#/account` is now Servers). */
+const LEGACY: Record<string, string> = { account: 'servers', install: 'library', mods: 'library' };
+
+export function pageFor(segment: string | undefined): string {
+  if (!segment) return 'home';
+  return LEGACY[segment] ?? segment;
+}
+
 class Router {
   route = $state<Route>(parseHash(typeof location === 'undefined' ? '' : location.hash));
 
@@ -32,7 +40,7 @@ class Router {
   }
 
   get page(): string {
-    return this.route.segments[0] ?? 'servers';
+    return pageFor(this.route.segments[0]);
   }
 
   go(path: string, query?: Record<string, string | undefined>): void {

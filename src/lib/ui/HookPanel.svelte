@@ -2,6 +2,7 @@
   import { app } from '../app.svelte';
   import { hookAction, hookReady, hookSummary } from '../hook';
   import { formatBytes } from '../format';
+  import { formatEta, formatSpeed } from '../transfer';
   import { versionLabel } from '../gameversion';
   import Icon from './Icon.svelte';
   import Chip from './Chip.svelte';
@@ -63,6 +64,9 @@
       <Progress value={pct} />
       <span class="num">{app.hookProgress ? formatBytes(app.hookProgress.done) : ''}</span>
     </div>
+    {#if app.hookProgress}
+      <p class="hint">{formatSpeed(app.hookRate.bps)}{app.hookProgress.total > 0 ? ` · ${formatEta(app.hookRate.etaSecs)} left · ${formatBytes(app.hookProgress.total)} in all` : ''}</p>
+    {/if}
   {/if}
   {#if app.hookError}
     <div class="notice danger"><span class="notice-title"><Icon name="alert" size={16} /> {looksOnly || !installing ? 'The client hook' : 'Download failed'}</span><p>{app.hookError}</p></div>

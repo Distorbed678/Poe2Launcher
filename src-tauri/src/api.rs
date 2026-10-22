@@ -42,6 +42,37 @@ pub struct ServerInfo {
     #[serde(default)]
     pub gateway_region: Option<String>,
     pub uptime_secs: u64,
+    /// Message of the day (optional, not sent by servers before the web API gained it): plain
+    /// text with line breaks, shown on Home. Capped when read.
+    #[serde(default, deserialize_with = "motd_field")]
+    pub motd: Option<String>,
+}
+
+/// Longest message of the day the launcher keeps (characters).
+pub const MAX_MOTD: usize = 2000;
+
+/// A missing, empty or non-text `motd` is `None`; a long one is cut; control characters other
+/// than line breaks are dropped.
+fn motd_field<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    let Some(serde_json::Value::String(s)) = v else {
+        return Ok(None);
+    };
+    let s: String = s
+        .replace("\r\n", "\n")
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
+        .take(MAX_MOTD)
+        .collect();
+    let s = s.trim().to_owned();
+    Ok((!s.is_empty()).then_some(s))
+}
+
+/// `GET /server` with the time the answer took, measured by the launcher.
+#[derive(Debug, Clone, Serialize)]
+pub struct ServerStatus {
+    pub info: ServerInfo,
+    pub ping_ms: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -99,9 +130,14 @@ pub struct ApiClient {
 impl ApiClient {
     /// `base` is the normalised base URL (no trailing slash, no `/api/v1`).
     pub fn new(base: &str) -> Self {
+        Self::with_timeouts(base, Duration::from_secs(6), Duration::from_secs(15))
+    }
+
+    /// For status checks of many servers at once: short timeouts.
+    pub fn with_timeouts(base: &str, connect: Duration, total: Duration) -> Self {
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .connect_timeout(Duration::from_secs(6))
+            .timeout(total)
+            .connect_timeout(connect)
             .user_agent(concat!("poe2-launcher/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("the HTTP client builds");
@@ -117,6 +153,16 @@ impl ApiClient {
 
     pub async fn server_info(&self) -> Result<ServerInfo, ApiError> {
         decode(self.http.get(self.url("/server")).send().await).await
+    }
+
+    /// `GET /server` and how long the whole request took (connect, TLS and answer).
+    pub async fn server_status(&self) -> Result<ServerStatus, ApiError> {
+        let t = std::time::Instant::now();
+        let info = self.server_info().await?;
+        Ok(ServerStatus {
+            info,
+            ping_ms: t.elapsed().as_millis().min(u32::MAX as u128) as u32,
+        })
     }
 
     pub async fn register(&self, username: &str, password: &str) -> Result<AccountInfo, ApiError> {
@@ -265,5 +311,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(info.instance_port, None);
+        assert_eq!(info.motd, None);
+    }
+
+    #[test]
+    fn the_message_of_the_day_is_optional_and_tidied() {
+        let parse = |motd: &str| -> Option<String> {
+            serde_json::from_str::<ServerInfo>(&format!(
+                r#"{{"name":"n","version":"0.5.5e","cluster_id":"c","online":0,"open_registration":false,
+                    "login_host":"h","login_port":20481,"uptime_secs":3,"motd":{motd}}}"#
+            ))
+            .unwrap()
+            .motd
+        };
+        assert_eq!(
+            parse(r#""Hello\r\nworld\u0007""#),
+            Some("Hello\nworld".into())
+        );
+        assert_eq!(parse(r#""   ""#), None);
+        assert_eq!(parse("null"), None);
+        assert_eq!(
+            parse("42"),
+            None,
+            "a motd of the wrong type must not break the status"
+        );
+        let long = format!("\"{}\"", "x".repeat(MAX_MOTD + 10));
+        assert_eq!(parse(&long).unwrap().chars().count(), MAX_MOTD);
     }
 }

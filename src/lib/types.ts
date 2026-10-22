@@ -29,6 +29,14 @@ export interface ServerInfo {
   instance_port: number | null;
   gateway_region: string | null;
   uptime_secs: number;
+  /** Message of the day: optional, only present when the server sends one. Plain text / markdown subset. */
+  motd?: string | null;
+}
+
+/** `GET /server` with the round-trip time measured by the launcher. */
+export interface ServerStatus {
+  info: ServerInfo;
+  ping_ms: number;
 }
 
 export interface AccountInfo {
@@ -67,6 +75,26 @@ export interface DepotView {
   id: number;
   manifest: string;
   role: string;
+  /** What the depot weighs in the overall progress (estimate). */
+  est_bytes: number;
+}
+
+/** A download that was paused and can be resumed (the password is not kept). */
+export interface PausedInstall {
+  version: string;
+  steam_username: string;
+  remember_login: boolean;
+}
+
+/** Free disk space against what the install needs. */
+export interface SpaceCheck {
+  path: string;
+  required: number;
+  present: number;
+  missing: number;
+  free: number | null;
+  ok: boolean;
+  message: string;
 }
 
 export interface InstallStatus {
@@ -78,6 +106,9 @@ export interface InstallStatus {
   tool_version: string;
   tool_ready: boolean;
   depots: DepotView[];
+  /** Estimated size of a whole install (0 = unknown). */
+  required_bytes: number;
+  paused: PausedInstall | null;
 }
 
 export interface InstallRequest {
@@ -321,4 +352,115 @@ export interface HookOutcome {
   hook: InstalledHook;
   sha256: string | null;
   source: 'download' | 'current';
+}
+
+// --- Home: news ----------------------------------------------------------------------------
+
+export type NewsSource = 'launcher' | 'server' | 'hook' | 'project';
+
+export interface NewsItem {
+  id: string;
+  source: NewsSource;
+  /** `YYYY-MM-DD` or an RFC 3339 time. */
+  date: string;
+  title: string;
+  /** A markdown subset, shown as text (never HTML). */
+  body: string;
+  link: string | null;
+  version?: string | null;
+}
+
+export interface NewsFeed {
+  items: NewsItem[];
+  fetched_at: number;
+  /** Nothing could be fetched just now: these are the saved items. */
+  offline: boolean;
+}
+
+// --- Server browser ------------------------------------------------------------------------
+
+export interface RequiredMod {
+  id: string;
+  version?: string | null;
+  url?: string | null;
+}
+
+export interface ListedServer {
+  id: string;
+  name: string;
+  address: string;
+  description: string;
+  region: string;
+  game_version: string;
+  tags: string[];
+  contact: string;
+  mods: RequiredMod[];
+  plain_http: boolean;
+}
+
+export interface ServerList {
+  servers: ListedServer[];
+  skipped: string[];
+  fetched_at: number;
+  offline: boolean;
+  error: string;
+}
+
+export interface ProbeResult {
+  id: string;
+  ok: boolean;
+  ping_ms: number | null;
+  info: ServerInfo | null;
+  error: string | null;
+}
+
+// --- Logs ----------------------------------------------------------------------------------
+
+export type LogKind = 'game' | 'server' | 'crash';
+
+export interface LogFile {
+  id: string;
+  kind: LogKind;
+  name: string;
+  size: number;
+  modified: number;
+  text: boolean;
+}
+
+export interface LogList {
+  files: LogFile[];
+  game_dir: string;
+  server_dir: string;
+  crash_dir: string;
+}
+
+export interface LogContent {
+  id: string;
+  lines: string[];
+  truncated: boolean;
+  size: number;
+  binary: boolean;
+}
+
+// --- Server backups ------------------------------------------------------------------------
+
+export interface BackupInfo {
+  name: string;
+  kind: 'manual' | 'auto' | 'pre-restore' | 'other';
+  /** Unix seconds. */
+  created: number;
+  size: number;
+}
+
+export interface BackupSettings {
+  auto: boolean;
+  keep: number;
+}
+
+export interface BackupStatus {
+  dir: string;
+  backups: BackupInfo[];
+  settings: BackupSettings;
+  database_size: number | null;
+  server_running: boolean;
 }

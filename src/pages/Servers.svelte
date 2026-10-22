@@ -17,7 +17,16 @@
   import Chip from '../lib/ui/Chip.svelte';
   import Empty from '../lib/ui/Empty.svelte';
   import Spinner from '../lib/ui/Spinner.svelte';
-  import SetupChecklist from '../lib/ui/SetupChecklist.svelte';
+  import AccountPanel from '../lib/ui/AccountPanel.svelte';
+  import Tabs from '../lib/ui/Tabs.svelte';
+  import ServerBrowser from '../lib/ui/ServerBrowser.svelte';
+  import { router } from '../lib/router.svelte';
+
+  const tab = $derived(router.route.query.get('tab') === 'browse' ? 'browse' : 'mine');
+  const tabs = $derived([
+    { id: 'mine', label: 'My servers', icon: 'servers' as const, badge: String(app.profiles.length) },
+    { id: 'browse', label: 'Browse', icon: 'compass' as const },
+  ]);
 
   let name = $state('');
   let url = $state('');
@@ -95,10 +104,13 @@
   }
 </script>
 
-<PageHead icon="servers" title="Servers" sub="A server profile is the address of a cluster's web API. Pick one in the bar below to play on it." />
+<PageHead icon="servers" title="Servers" sub="Your servers and the public list. A server profile is the address of a cluster's web API; pick one in the bar below to play on it." />
 
-<SetupChecklist />
+<Tabs {tabs} value={tab} label="Servers" onchange={(id) => router.go('servers', { tab: id === 'browse' ? 'browse' : undefined })} />
 
+{#if tab === 'browse'}
+  <ServerBrowser />
+{:else}
 <div class="two">
   <section class="card" id="add-server" bind:this={formEl}>
     <div class="card-head">
@@ -131,7 +143,7 @@
   <section>
     {#if app.profiles.length === 0}
       <Empty icon="servers" title="No servers yet">
-        Add the address of a server's web API on the left, or set one up on this computer with <a href="#/host">Host a server</a>.
+        Add the address of a server's web API on the left, find one in <a href="#/servers?tab=browse">Browse</a>, or set one up on this computer with <a href="#/host">Host a server</a>.
       </Empty>
     {/if}
     {#each app.profiles as p (p.id)}
@@ -178,6 +190,7 @@
         </div>
         {#if p.keyring_error}<p class="err" style="margin-top: 10px">{p.keyring_error}</p>{/if}
         <PlainHttpNotice profile={p} onchange={() => app.refreshProfiles()} />
+        <AccountPanel profile={p} />
         {#if compat.kind === 'other'}
           <div class="notice danger" style="margin: 12px 0 0">
             <span class="notice-title"><Icon name="alert" size={16} /> Another game version</span>
@@ -194,8 +207,9 @@
           <p class="err server-info">{info}</p>
         {:else if info}
           <div class="server-info">
-            <div class="stat-row">
+            <div class="stat-row four">
               <div class="stat"><small>Online</small><b>{info.online}</b></div>
+              <div class="stat"><small>Ping</small><b>{app.pings[p.id] !== undefined ? `${app.pings[p.id]} ms` : '-'}</b></div>
               <div class="stat"><small>Client</small><b>{info.version}</b></div>
               <div class="stat"><small>Uptime</small><b>{formatUptime(info.uptime_secs)}</b></div>
             </div>
@@ -210,3 +224,4 @@
     {/each}
   </section>
 </div>
+{/if}

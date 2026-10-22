@@ -1,6 +1,6 @@
 import type { PromptKind, VerifyReport } from './types';
 
-export type Phase = 'idle' | 'fetching_tool' | 'downloading' | 'verifying' | 'done' | 'failed' | 'cancelled';
+export type Phase = 'idle' | 'fetching_tool' | 'downloading' | 'verifying' | 'paused' | 'done' | 'failed' | 'cancelled';
 
 export interface InstallState {
   phase: Phase;

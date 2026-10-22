@@ -2,6 +2,8 @@
 //! deploy and launch, mods. `core` is the service layer; `commands` exposes it to the UI.
 
 pub mod api;
+pub mod backup;
+pub mod backup_ops;
 pub mod commands;
 pub mod core;
 pub mod depot;
@@ -12,11 +14,15 @@ pub mod host;
 pub mod host_ops;
 pub mod host_run;
 pub mod keystore;
+pub mod logs;
 pub mod mods;
+pub mod news;
 pub mod paths;
 pub mod play;
 pub mod profiles;
+pub mod serverlist;
 pub mod settings;
+pub mod space;
 pub mod steam;
 pub mod verify;
 pub mod version;
@@ -178,6 +184,23 @@ pub fn run() {
             commands::install_start,
             commands::install_input,
             commands::install_cancel,
+            commands::install_pause,
+            commands::install_resume,
+            commands::install_space,
+            commands::news_get,
+            commands::server_status,
+            commands::server_list_get,
+            commands::server_list_probe,
+            commands::log_list,
+            commands::log_read,
+            commands::log_report,
+            commands::log_open_folder,
+            commands::backup_status,
+            commands::backup_create,
+            commands::backup_restore,
+            commands::backup_delete,
+            commands::backup_set_settings,
+            commands::open_link,
             commands::install_verify,
             commands::mods_list,
             commands::mod_install,

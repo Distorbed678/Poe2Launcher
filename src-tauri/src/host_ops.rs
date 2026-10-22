@@ -90,7 +90,7 @@ pub struct HostStatus {
 }
 
 impl Core {
-    fn host_dirs(&self) -> HostDirs {
+    pub(crate) fn host_dirs(&self) -> HostDirs {
         HostDirs::new(&self.dirs)
     }
 
@@ -536,13 +536,18 @@ impl Core {
         if !busy.is_empty() {
             bail!("these ports are already in use: {}", busy.join(", "));
         }
+        // The database is not in use yet: the best moment for a safe copy.
+        self.backup_auto();
         self.host
             .start(self.events.clone(), &self.host_spec(&pkg, "server.toml"))?;
         Ok(())
     }
 
     pub async fn host_stop(&self) -> Result<()> {
-        self.host.stop(Duration::from_secs(20)).await
+        // SIGTERM, up to the grace time for the server's own shutdown, then a hard kill.
+        self.host
+            .stop(crate::host_run::STOP_GRACE + Duration::from_secs(10))
+            .await
     }
 
     /// Start with the launcher when the user asked for that. Failures go to the server log.

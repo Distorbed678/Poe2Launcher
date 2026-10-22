@@ -46,6 +46,9 @@ poe-hook-deploy = { path = "../client-hook/poe-hook-deploy" }
 toml_edit = "0.25"
 flate2 = "1"
 tar = "0.4"
+# Server backups: SQLite online backup API (works while the server runs); same version and
+# bundled build as Poe2ModdingProject's own crates.
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
 
 # Self-update of the launcher: signed releases from GitHub (tauri.conf.json, plugins.updater).
 # Desktop only; the updater works on an AppImage (Linux) and the NSIS install (Windows).

@@ -908,4 +908,75 @@ echo "got $code"
         ctx.send(true).unwrap();
         assert_eq!(t.await.unwrap().unwrap(), Outcome::Cancelled);
     }
+
+    /// Pause is "stop the process"; resume is the same command line again, which carries on
+    /// from what is on disk. A fake tool that works in 5 steps and remembers its progress in a
+    /// file shows the restart is clean: no password in the arguments, same arguments twice.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_stopped_run_can_be_started_again_with_the_same_arguments() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let script = tmp.path().join("fake-dd");
+        let done = tmp.path().join("done");
+        let args_log = tmp.path().join("args");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+echo "$@" >> "{args}"
+n=$(cat "{done}" 2>/dev/null || echo 0)
+echo "Downloading depot 2694491"
+while [ "$n" -lt 5 ]; do
+  n=$((n+1)); echo $n > "{done}"
+  printf '%s.00%% f%s\n' $((n*20)) $n
+  # the first run is slow after step 2 (and gets paused there)
+  if [ "$n" -ge 2 ] && [ ! -f "{done}.resumed" ] && [ ! -f "{args}.2" ]; then sleep 30; fi
+done
+"#,
+                args = args_log.display(),
+                done = done.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let args: Vec<String> = ["-app", "1", "-dir", "/x", "-validate"]
+            .map(String::from)
+            .to_vec();
+
+        // First run: paused (killed) after it reported 40 %.
+        let (etx, mut erx) = mpsc::unbounded_channel();
+        let (_itx, irx) = mpsc::unbounded_channel();
+        let (ctx, crx) = watch::channel(false);
+        let (s1, a1) = (script.clone(), args.clone());
+        let t = tokio::spawn(async move { run(&s1, &a1, None, etx, irx, crx, None).await });
+        while let Some(ev) = erx.recv().await {
+            if matches!(ev, DepotEvent::Progress { percent, .. } if percent >= 40.0) {
+                break;
+            }
+        }
+        ctx.send(true).unwrap();
+        assert_eq!(t.await.unwrap().unwrap(), Outcome::Cancelled);
+        assert_eq!(std::fs::read_to_string(&done).unwrap().trim(), "2");
+
+        // Second run: same arguments, continues from the saved state and finishes.
+        std::fs::write(tmp.path().join("args.2"), "").unwrap();
+        let (etx, mut erx) = mpsc::unbounded_channel();
+        let (_itx, irx) = mpsc::unbounded_channel();
+        let (_ctx, crx) = watch::channel(false);
+        let (s2, a2) = (script.clone(), args.clone());
+        let t = tokio::spawn(async move { run(&s2, &a2, None, etx, irx, crx, None).await });
+        let mut progress = Vec::new();
+        while let Some(ev) = erx.recv().await {
+            if let DepotEvent::Progress { percent, .. } = ev {
+                progress.push(percent as u32);
+            }
+        }
+        assert_eq!(t.await.unwrap().unwrap(), Outcome::Success);
+        assert_eq!(progress, [60, 80, 100]);
+        let log = std::fs::read_to_string(&args_log).unwrap();
+        let runs: Vec<&str> = log.lines().collect();
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0], runs[1], "the same command line both times");
+    }
 }

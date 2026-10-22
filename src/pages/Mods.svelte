@@ -9,7 +9,6 @@
   import { cubicOut } from 'svelte/easing';
   import { ask } from '../lib/confirm.svelte';
   import { ms } from '../lib/motion';
-  import PageHead from '../lib/ui/PageHead.svelte';
   import Icon from '../lib/ui/Icon.svelte';
   import Chip from '../lib/ui/Chip.svelte';
   import Empty from '../lib/ui/Empty.svelte';
@@ -91,11 +90,14 @@
   }
 </script>
 
-<PageHead icon="mods" title="Mods" sub="Mod files live in the install's poe-hook-mods folder, never in the game files.">
-  <button type="button" class="btn" onclick={pickFolder}><Icon name="folder" size={14} /> Add folder</button>
-  <button type="button" class="btn" onclick={pickZip}><Icon name="box" size={14} /> Add zip</button>
-  <button type="button" class="btn" onclick={async () => { await run(() => ipc.modAutoOrder(), 'Load order resolved'); await load(); }}><Icon name="refresh" size={14} /> Auto order</button>
-</PageHead>
+<div class="sechead">
+  <p class="muted">Mod files live in the install's poe-hook-mods folder, never in the game files.</p>
+  <div class="toolbar">
+    <button type="button" class="btn" onclick={pickFolder}><Icon name="folder" size={14} /> Add folder</button>
+    <button type="button" class="btn" onclick={pickZip}><Icon name="box" size={14} /> Add zip</button>
+    <button type="button" class="btn" onclick={async () => { await run(() => ipc.modAutoOrder(), 'Load order resolved'); await load(); }}><Icon name="refresh" size={14} /> Auto order</button>
+  </div>
+</div>
 
 <div class="notice info">
   <span class="notice-title"><Icon name="info" size={16} /> The game does not load mods yet</span>

@@ -2,21 +2,19 @@
 
 Desktop launcher for the Path of Exile 2 private server (Poe2ModdingProject; supports every client build that has a `versions/<version>.toml`, today 0.5.5e, plus an *Official (read-only)* mode): one small program per player that does what `cargo xtask deploy-client` and `run-client` do for the developer.
 
-Tauri 2 (Rust backend in `src-tauri/`) with a Svelte 5 + Vite + TypeScript UI (`src/`). Dark theme by default (light in Settings), a custom title bar and window frame, page transitions and other small animations that follow `prefers-reduced-motion`. A development preview without the backend: `npm run dev`, then open `http://localhost:1420/?mock` in a browser (`&versions` adds a second game version, `&official` the official mode, `&empty`, `&fresh`, `&mods`, `&theme=light`; the mock lives in `src/lib/mock.ts` and is not in release builds).
+Tauri 2 (Rust backend in `src-tauri/`) with a Svelte 5 + Vite + TypeScript UI (`src/`). Dark theme by default (light in Settings), a custom title bar and window frame, page transitions and other small animations that follow `prefers-reduced-motion`. A development preview without the backend: `npm run dev`, then open `http://localhost:1420/?mock` in a browser (`&versions` adds a second game version, `&official` the official mode, `&empty`, `&fresh`, `&mods`, `&theme=light`, `&installing`, `&paused`, `&lowspace`, `&offline`, `&nonews`, `&motd`, `&nolist`, `&nobackups`, `&nologs`; the mock lives in `src/lib/mock.ts` and is not in release builds).
 
-**Window:** a title bar with the icon, the **game version dropdown**, an update badge and minimize / maximize / close buttons (drag to move, double-click to maximize, resize handles on all edges), a sidebar with the pages, and the Play bar at the bottom.
+**Window:** a title bar with the icon, the **game version dropdown**, an update badge and minimize / maximize / close buttons (drag to move, double-click to maximize, resize handles on all edges), a sidebar with the pages (Home, Servers, Host, Library, Settings; About at the foot), and the Play bar at the bottom of every page but Home.
 
 | Page | Does |
 |---|---|
 | Game version dropdown (title bar) | *Official (read-only)* first, then every embedded private version (newest first). Saved as `game_version` in `settings.json`. Drives the install folder and depots, verify, deploy, Play, the Host server-release filter, mods and the server compatibility marks. Refused while an install, the game or the hosted server runs |
-| Servers | profiles: a name and the cluster's web API address; *Check* shows `GET /server` (realm, version, players online, whether registration is open) and refreshes the account's role. A server reporting another client version is marked *incompatible* / *needs client X* (with *Switch*). A plain `http://` address to another machine asks for a confirmation first (see Security). An admin sees *Open web admin* |
-| Account | log in (`POST /api/v1/login`, kind `launcher`), create an account (`POST /register`), log out (`POST /logout` revokes the token). The token lives in the OS keyring only. Shows the role; admins get *Open web admin* |
-| Install | downloads the selected client from Steam depots with the player's own Steam login (pinned manifests for a private version, the current build for Official), then verifies it |
-| Host a server | download the matching `poe-server` release (SHA-256 checked) or pick a local package, set it up (name, ports, public host, registration, admin account), start and stop it with a streamed log, optional autostart; the server is added to Servers. Private versions only |
-| Mods | list, add from a folder or zip, enable/disable, load order, compatibility check. Private versions only |
-| Settings | per-version install dir, hook DLL dir, Proton (Linux), **Steam account** (*Logged in as X* / *Not logged in*, *Log out of Steam*), Steam download options, theme, window frame (own or system), *Minimize the launcher while the game is running* (off by default), the desktop entry (Linux), launcher updates (check, release notes, download + verify + restart) |
-| About | launcher version, the supported game versions with their state, data folders, disclaimer |
-| Play (footer) | private version: deploys the hook, writes the auto-login token, starts the game. Official: the one-time risk confirmation, then the read-only deploy (`mode = "official"`, empty `trusted_servers`, original gateway list, Steam login in the game) and the game; no token, no login. Shows the status |
+| Home | The selected server with live status (online, players, ping measured by the launcher, client version, compatibility), the big Play button, the *Get ready to play* checklist, **News** (release notes of Poe2Launcher, Poe2ModdingProject `server-v*` and Poe2ClientHook `hook-v*` from the GitHub releases API, plus `news.json` of the main repository; cached, quiet offline) and the server's optional message of the day (`motd` of `GET /api/v1/server`) |
+| Servers | *My servers*: profiles (a name and the cluster's web API address); *Check* shows `GET /server`; **log in, create an account, log out** inside each server's card (token in the OS keyring only); a server reporting another client version is marked *incompatible* / *needs client X* (with *Switch*); a plain `http://` address to another machine asks for a confirmation first (see Security); admins see *Web admin*. *Browse*: the public list (`Distorbed678/Poe2ServerList`, `servers.json`), live status and ping asked by the launcher itself, filter/search/sort, *Add to my servers* |
+| Host | download the matching `poe-server` release (SHA-256 checked) or pick a local package, set it up (name, ports, public host, registration, admin account), start and stop it with a streamed log, optional autostart, restart supervision (exit code 75 from the web admin's Restart starts it again), **database backups** (online SQLite backup, restore with a safety backup, automatic backup before each start, keep the last N); the server is added to Servers. Private versions only |
+| Library | *Game*: downloads the selected client from Steam depots with the player's own Steam login (pinned manifests for a private version, the current build for Official) with pause/resume, speed and time left and a disk-space check, verify/repair, and the **Client hook** card. *Mods*: list, add from a folder or zip, enable/disable, load order, compatibility check (private versions only). *Logs*: game logs, the server log, crash dumps, search, *Copy for a bug report* (redacted) |
+| Settings | per-version install dir, hook DLL dir, Proton (Linux), **Steam account** (*Logged in as X* / *Not logged in*, *Log out of Steam*), Steam download options, theme, window frame (own or system), *Minimize the launcher while the game is running* (off by default), the desktop entry (Linux), launcher updates (check, release notes, download + verify + restart). About (version, supported game versions, data folders, disclaimer) is the link at the foot of the sidebar |
+| Play (Home, and the bar on the other pages) | private version: deploys the hook, writes the auto-login token, starts the game. Official: the one-time risk confirmation, then the read-only deploy (`mode = "official"`, empty `trusted_servers`, original gateway list, Steam login in the game) and the game; no token, no login. Shows the status |
 
 The full guide (set-up, first run, troubleshooting) is `docs/guides/launcher.md` in Poe2ModdingProject; this file is the developer's view.
 
@@ -39,7 +37,7 @@ In a checkout of Poe2ModdingProject the launcher is `modules/launcher`; its `src
 ## Layout
 
 ```
-src/                 Svelte UI: App.svelte (window shell, nav, Play bar), pages/, lib/ (ipc.ts, app.svelte.ts (state), gameversion.ts, install.ts, mods.ts, update.ts, frame.ts (window calls), motion.ts, mock.ts (dev preview), ui/ (Icon, Dropdown, Switch, Chip, Progress, Toasts, ConfirmDialog, TitleBar, ...)), app.css (tokens + all components), assets/
+src/                 Svelte UI: App.svelte (window shell, nav, Play bar), pages/ (Home, Servers, Host, Library (tabs Install = Game, Mods, Logs), Settings, About), lib/ (ipc.ts, app.svelte.ts (state), gameversion.ts, install.ts, transfer.ts (speed, time left), markdown.ts (safe subset), browse.ts (server list filter/sort), logview.ts, rate.svelte.ts, mods.ts, update.ts, frame.ts (window calls), motion.ts, mock.ts (dev preview), ui/ (Icon, Dropdown, Tabs, Markdown, AccountPanel, ServerBrowser, Switch, Chip, Progress, Toasts, ConfirmDialog, TitleBar, ...)), app.css (tokens + all components), assets/
 assets/icon.svg      the app icon source (original artwork); `npx tauri icon assets/icon.svg` regenerates src-tauri/icons/
 src-tauri/src/
   core.rs            service layer (everything the UI can do; no Tauri types, testable)
@@ -50,6 +48,12 @@ src-tauri/src/
   hook.rs            Client hook, pure parts: release lookup (GitHub, tag `hook-v*`), asset names, `release.json`, per-file SHA-256 check, safe install into `<data>/hook/packages/<version>`, which package serves a game version
   hook_ops.rs        Client hook on Core: status, check for an update, download + verify + install, `hook_dll_dir` (manual directory > downloaded > old default folder), the check before each deploy
   host_ops.rs        Host a server on Core: install (download or local), setup (config + admin account), start/stop/status
+  backup.rs          server database backups: SQLite online backup, list, restore with a safety backup, prune, settings (backup.json)
+  backup_ops.rs      backups on Core (+ the automatic backup before a start)
+  news.rs            Home news: GitHub release notes of the three repositories + news.json, validation, on-disk cache
+  serverlist.rs      the public server list (Poe2ServerList): fetch, per-entry validation, cache, parallel probes of GET /server with ping
+  logs.rs            log and crash viewer: listing by id, tail reading, the bug-report text and its redaction
+  space.rs           disk-space check before an install, depot weights for the progress estimate
   profiles.rs        server profiles (profiles.json, no secrets)
   keystore.rs        TokenStore: KeyringStore (keyring crate) / MemoryStore (tests)
   settings.rs        settings.json
@@ -80,7 +84,9 @@ client-hook/         submodule: Poe2ClientHook (poe-hook-deploy used as a path d
 | Remembered Steam login (DepotDownloader's `account.config`, a token, never the password) | `<data>/poe2-launcher/steam-login/IsolatedStorage/...` on Linux (the tool runs with `XDG_DATA_HOME` there); `%LOCALAPPDATA%\IsolatedStorage` on Windows. *Log out of Steam* deletes it |
 | `.desktop` entry and icons (only if you press *Install desktop entry*) | `~/.local/share/applications/org.poe2modding.launcher.desktop`, `~/.local/share/icons/hicolor/*/apps/org.poe2modding.launcher.*` |
 | Server settings (name, ports, public host, admin name; no secrets) | `<config>/poe2-launcher/host.json` |
-| Server package, database, log | `<data>/poe2-launcher/server/{packages,downloads,data,server.log}` (the database is outside the package, so an update keeps accounts and characters) |
+| News and server-list cache (copies, safe to delete) | `<data>/poe2-launcher/cache/{news.json,serverlist.json}` |
+| Backup choices (automatic backup, how many to keep) | `<config>/poe2-launcher/backup.json` |
+| Server package, database, log, backups | `<data>/poe2-launcher/server/{packages,downloads,data,backups,server.log}` (the database is outside the package, so an update keeps accounts and characters) |
 | Admin password (Host a server) | typed in the UI, written once to the standard input of `poe-server account create <name> --password-stdin` (a one-shot command, the server is not started) and wiped. Not stored, not in a file, not on a command line |
 | Steam password | typed in the UI, written once to DepotDownloader's stdin when it asks, wiped. Not stored, not on a command line |
 

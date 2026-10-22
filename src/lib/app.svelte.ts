@@ -6,8 +6,10 @@ import { run, toasts } from './notify.svelte';
 import { updater } from './update.svelte';
 import { ask } from './confirm.svelte';
 import { isPlainHttpBlocked } from './url';
+import { RateTracker } from './rate.svelte';
+import { installBytesDone, installBytesTotal } from './transfer';
 import { compatBlocker, isOfficial, serverCompat, versionLabel, type Compat } from './gameversion';
-import type { AppInfo, GameVersion, HookCheck, HookStatus, InstallStatus, PlayState, ProfileView, ServerInfo, Settings } from './types';
+import type { NewsFeed, AppInfo, GameVersion, HookCheck, HookStatus, InstallStatus, PlayState, ProfileView, ServerInfo, Settings, SpaceCheck } from './types';
 
 class AppState {
   info = $state<AppInfo | null>(null);
@@ -19,7 +21,18 @@ class AppState {
   ready = $state(false);
   /** What each server's `GET /server` last said (or the error), by profile id. */
   infos = $state<Record<string, ServerInfo | string>>({});
+  /** Round-trip time of each server's last status request, measured by the launcher (ms). */
+  pings = $state<Record<string, number>>({});
   switching = $state(false);
+
+  /** Speed and time left of the game download and of the hook download. */
+  installRate = new RateTracker();
+  hookRate = new RateTracker();
+  /** Project news for Home (loaded once per start, and when the user presses refresh). */
+  news = $state<NewsFeed | null>(null);
+  newsLoading = $state(false);
+  /** The disk-space check shown before and during an install. */
+  space = $state<SpaceCheck | null>(null);
 
   /** The client hook: what Play would use, the newest release GitHub has, and a running download. */
   hook = $state<HookStatus | null>(null);
@@ -49,7 +62,10 @@ class AppState {
       (text) => toasts.show('error', text),
     );
     await listenHook({
-      onProgress: (p) => (this.hookProgress = { done: p.done, total: p.total }),
+      onProgress: (p) => {
+        this.hookProgress = { done: p.done, total: p.total };
+        this.hookRate.feed(p.done, p.total);
+      },
       onStep: (s) => (this.hookStep = s),
     });
     await Promise.all([this.refreshProfiles(), this.refreshSettings(), this.refreshStatus(), this.refreshHook()]);
@@ -59,6 +75,7 @@ class AppState {
     // Roles may have changed on the servers since the last run: re-read them quietly.
     void this.refreshRoles();
     void this.checkServers();
+    void this.loadNews();
     // A newer hook release: look once at start, quietly.
     if (this.hook?.installed) void this.checkHook(true);
     // Launcher self-update: look once at start; a failure is a quiet state, never a toast.
@@ -67,10 +84,36 @@ class AppState {
 
   applyInstall(ev: InstallEvent): void {
     this.install = reduce(this.install, ev);
-    if (ev.type === 'state' && (ev.state === 'done' || ev.state === 'failed' || ev.state === 'cancelled')) {
+    if (ev.type === 'state' && ev.state === 'fetching_tool') this.installRate.reset();
+    if (ev.type === 'progress' && ev.phase === 'depot' && this.status) {
+      const total = this.status.required_bytes > 0 ? installBytesTotal(this.status.depots) : 0;
+      this.installRate.feed(installBytesDone(this.status.depots, this.install.depots), total);
+    }
+    if (ev.type === 'state' && (ev.state === 'done' || ev.state === 'failed' || ev.state === 'cancelled' || ev.state === 'paused')) {
+      this.installRate.reset();
       void this.refreshStatus();
       void this.refreshInfo();
     }
+  }
+
+  async refreshSpace(): Promise<void> {
+    try {
+      this.space = await ipc.installSpace();
+    } catch {
+      this.space = null;
+    }
+  }
+
+  /** News from GitHub; quiet: the backend answers with the saved copy when offline. */
+  async loadNews(force = false): Promise<void> {
+    if (this.newsLoading) return;
+    this.newsLoading = true;
+    try {
+      this.news = await ipc.newsGet(force);
+    } catch {
+      /* keep what is shown */
+    }
+    this.newsLoading = false;
   }
 
   async refreshInfo(): Promise<void> {
@@ -84,11 +127,13 @@ class AppState {
   /** Asks one server what it is (and which client version it needs). Never toasts; the result is stored. */
   async checkServer(id: string): Promise<ServerInfo | null> {
     try {
-      const info = await ipc.serverInfo(id);
-      this.infos[id] = info;
-      return info;
+      const st = await ipc.serverStatus(id);
+      this.infos[id] = st.info;
+      this.pings[id] = st.ping_ms;
+      return st.info;
     } catch (e) {
       this.infos[id] = e instanceof Error ? e.message : String(e);
+      delete this.pings[id];
       return null;
     }
   }
@@ -116,7 +161,7 @@ class AppState {
     const p = this.profiles.find((x) => x.id === id);
     if (!p) return;
     if (isPlainHttpBlocked(p)) {
-      toasts.show('error', 'This server uses plain http://. Allow it first (Servers page), then try again.');
+      toasts.show('error', 'This server uses plain http://. Allow it first (Servers), then try again.');
       return;
     }
     await run(() => ipc.webAdminOpen(id), 'Opening the web admin in your browser...');
@@ -161,6 +206,7 @@ class AppState {
     this.hookTask = 'install';
     this.hookError = '';
     this.hookProgress = null;
+    this.hookRate.reset();
     this.hookStep = '';
     try {
       const out = await ipc.hookInstallLatest();
@@ -173,6 +219,7 @@ class AppState {
     }
     this.hookTask = '';
     this.hookProgress = null;
+    this.hookRate.reset();
     this.hookStep = '';
   }
 
@@ -244,13 +291,13 @@ class AppState {
 
   /** Why Play is not possible right now, or null. */
   get playBlocker(): string | null {
-    if (!this.status?.installed) return 'Install the game first (Install page)';
-    if (this.hook && !hookReady(this.hook)) return 'Get the client hook first (Install page)';
+    if (!this.status?.installed) return 'Install the game first (Library)';
+    if (this.hook && !hookReady(this.hook)) return 'Get the client hook first (Library)';
     if (this.play.state === 'preparing' || this.play.state === 'running') return 'The game is already starting or running';
     if (this.official) return null;
-    if (!this.selected) return 'Add a server first (Servers page)';
-    if (isPlainHttpBlocked(this.selected)) return 'Allow plain http for this server first (Servers page)';
-    if (!this.selected.logged_in) return 'Log in to the server first (Account page)';
+    if (!this.selected) return 'Add a server first (Servers)';
+    if (isPlainHttpBlocked(this.selected)) return 'Allow plain http for this server first (Servers)';
+    if (!this.selected.logged_in) return 'Log in to the server first (Servers)';
     return compatBlocker(this.compat);
   }
 }
