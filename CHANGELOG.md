@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - New look: dark theme (light optional), sidebar and title bar, cards, status chips, progress bars, empty states, in-app dialogs, toasts, page transitions and hover/press feedback (all off with `prefers-reduced-motion`), a new About page.
 - **Game version dropdown** in the title bar: every supported private-server version (from the embedded `versions/*.toml`, newest first) and, at the top, **Official (read-only)**. The choice is saved and drives the install folder (one per version), depots, verification, deploy, Play, Host a server's release filter and the server list; a server that reports another client version is marked incompatible (with *Switch*). Adding `versions/<v>.toml` adds an entry.
