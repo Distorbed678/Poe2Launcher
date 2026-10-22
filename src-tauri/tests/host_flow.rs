@@ -221,6 +221,8 @@ fn env() -> Env {
         events.clone(),
     )
     .unwrap();
+    // The mock releases are for the oldest supported game version (a newer one may be added).
+    core.set_game_version(&oldest_version()).unwrap();
     Env { tmp, core, events }
 }
 
@@ -529,6 +531,7 @@ mod fake {
         std::fs::write(game.join("PathOfExileSteam.exe"), b"x").unwrap();
         e.core
             .set_settings(poe2_launcher_lib::settings::Settings {
+                game_version: Some(oldest_version()),
                 install_dir: Some(game),
                 ..Default::default()
             })
@@ -685,6 +688,7 @@ async fn real_package_setup_start_status_log_stop() {
 
     // The launcher's installed game is the given folder.
     let settings = Settings {
+        game_version: Some(oldest_version()),
         install_dir: Some(PathBuf::from(&game)),
         ..Settings::default()
     };
@@ -904,4 +908,9 @@ fn all_files(dir: &Path) -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// The version the legacy `install_dir` setting belongs to (the oldest supported one).
+fn oldest_version() -> String {
+    poe2_launcher_lib::version::VersionFile::known_versions()[0].to_owned()
 }

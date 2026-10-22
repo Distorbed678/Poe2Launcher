@@ -1,7 +1,7 @@
 [package]
 name = "poe2-launcher"
 version = "0.1.1"
-description = "Launcher for the PoE2 0.5.5e private server: server profiles, game install from Steam depots, hook deploy, mods"
+description = "Launcher for the PoE2 private server: game versions, server profiles, game install from Steam depots, hook deploy, mods"
 edition = "2024"
 license = "MIT"
 publish = false
@@ -57,6 +57,11 @@ tauri-plugin-opener = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Linux: the window's Wayland app_id is GTK's program name; it is set to the app identifier so
+# the compositor finds org.poe2modding.launcher.desktop (the same glib the GTK stack uses).
+[target.'cfg(target_os = "linux")'.dependencies]
+glib = "0.18"
 
 [dev-dependencies]
 tempfile = "3"

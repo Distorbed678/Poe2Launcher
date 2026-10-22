@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Poe2 Launcher</title>
+  <desc>An abstract portal: a stone-like gateway arch with a glowing doorway and a keystone rune. Original artwork.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1d2133"/>
+      <stop offset="1" stop-color="#0a0c13"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="512" cy="640" r="330" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff1cf"/>
+      <stop offset="0.28" stop-color="#ffc766"/>
+      <stop offset="0.62" stop-color="#9a5ff0" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#2b1a66" stop-opacity="0.2"/>
+    </radialGradient>
+    <linearGradient id="arch" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd48a"/>
+      <stop offset="1" stop-color="#d98a2b"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="512" cy="600" r="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7a52e8" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#7a52e8" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="door"><path d="M352 812V474C352 372 422 306 512 306S672 372 672 474V812Z"/></clipPath>
+    <clipPath id="tile"><rect x="32" y="32" width="960" height="960" rx="224"/></clipPath>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#bg)"/>
+  <g clip-path="url(#tile)">
+    <rect x="32" y="32" width="960" height="960" fill="url(#halo)"/>
+    <!-- doorway -->
+    <path d="M352 812V474C352 372 422 306 512 306S672 372 672 474V812Z" fill="url(#glow)"/>
+    <g clip-path="url(#door)" fill="none" stroke-linecap="round">
+      <ellipse cx="512" cy="640" rx="96" ry="132" stroke="#fff6e0" stroke-opacity="0.85" stroke-width="10"/>
+      <ellipse cx="512" cy="640" rx="150" ry="206" stroke="#ffe3a8" stroke-opacity="0.55" stroke-width="8" stroke-dasharray="120 70"/>
+      <ellipse cx="512" cy="640" rx="204" ry="280" stroke="#d9c4ff" stroke-opacity="0.4" stroke-width="7" stroke-dasharray="60 90"/>
+      <path d="M512 330V812" stroke="#fff6e0" stroke-opacity="0.35" stroke-width="6"/>
+    </g>
+    <!-- arch -->
+    <path d="M300 836V474C300 340 392 252 512 252S724 340 724 474V836" fill="none" stroke="url(#arch)" stroke-width="56" stroke-linejoin="round"/>
+    <path d="M326 836V474C326 354 408 278 512 278S698 354 698 474V836" fill="none" stroke="#fff2d6" stroke-opacity="0.55" stroke-width="6"/>
+    <!-- keystone rune -->
+    <path d="M512 160L566 222L512 284L458 222Z" fill="#ffd48a" stroke="#0a0c13" stroke-width="10" stroke-linejoin="round"/>
+    <path d="M512 262V190M512 228L482 192M512 228L542 192" fill="none" stroke="#0a0c13" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- threshold -->
+    <rect x="236" y="836" width="552" height="44" rx="22" fill="url(#arch)"/>
+    <rect x="300" y="892" width="424" height="18" rx="9" fill="#ffd48a" fill-opacity="0.35"/>
+  </g>
+</svg>

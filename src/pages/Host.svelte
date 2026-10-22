@@ -11,6 +11,11 @@
     validateHostForm, type HostForm,
   } from '../lib/host';
   import PageHead from '../lib/ui/PageHead.svelte';
+  import Icon from '../lib/ui/Icon.svelte';
+  import Chip from '../lib/ui/Chip.svelte';
+  import Empty from '../lib/ui/Empty.svelte';
+  import Spinner from '../lib/ui/Spinner.svelte';
+  import Progress from '../lib/ui/Progress.svelte';
   import type { HostStatus, InstallOutcome, RunState } from '../lib/types';
 
   let status = $state<HostStatus | null>(null);
@@ -196,15 +201,15 @@
   }
 </script>
 
-<PageHead title="Host a server" sub="Run a private PoE2 server on this computer and let friends join it." />
+<PageHead icon="host" title="Host a server" sub="Run a private PoE2 server on this computer and let friends join it." />
 
 {#if status && !status.platform.match(/^(linux|windows)$/)}
-  <div class="card empty muted">Hosting from the launcher works on Linux and Windows only.</div>
+  <Empty icon="host" title="Not available here">Hosting from the launcher works on Linux and Windows only.</Empty>
 {:else if status && form}
   <div class="stack">
     <!-- 1. The server program -->
     <section class="card">
-      <h2>1. Server program</h2>
+      <div class="card-head"><span class="head-icon"><Icon name="box" size={16} /></span><h2>1. Server program</h2>{#if status.package}<span class="grow"></span><Chip tone="ok" icon="check">installed</Chip>{/if}</div>
       {#if status.package}
         <dl class="kv">
           <dt>Installed</dt><dd>{status.package.name}</dd>
@@ -216,16 +221,16 @@
         {#if status.package_problem}<p class="err">{status.package_problem}</p>{/if}
       {/if}
       <div class="row" style="margin-top: 8px">
-        <button type="button" class="primary" disabled={task !== '' || up || status.busy} onclick={download}>
+        <button type="button" class="btn primary" disabled={task !== '' || up || status.busy} onclick={download}>
           {status.package ? 'Update to the latest release' : 'Download the latest release'}
         </button>
-        <button type="button" disabled={task !== '' || up || status.busy} onclick={() => pickLocal(false)}>Use a package file...</button>
-        <button type="button" disabled={task !== '' || up || status.busy} onclick={() => pickLocal(true)}>Use a package folder...</button>
+        <button type="button" class="btn" disabled={task !== '' || up || status.busy} onclick={() => pickLocal(false)}>Use a package file...</button>
+        <button type="button" class="btn" disabled={task !== '' || up || status.busy} onclick={() => pickLocal(true)}>Use a package folder...</button>
       </div>
       {#if task === 'download' || task === 'local'}
-        <p class="hint">{step || 'Working...'}</p>
+        <p class="hint"><Spinner size={12} /> {step || 'Working...'}</p>
         {#if pct !== null && progress?.phase === 'download'}
-          <div class="prog"><div style:width="{pct}%"></div></div>
+          <Progress value={pct} />
           <p class="hint">{formatBytes(progress.done)} of {formatBytes(progress.total)}</p>
         {/if}
       {/if}
@@ -246,16 +251,16 @@
         Downloads are checked against the release's SHA-256 file; a mismatch installs nothing. The package holds no game files.
       </p>
       {#if noGame}
-        <p class="notice">
-          The game is not installed in <code>{status.install_dir}</code>. The server reads its game data from there:
-          <a href="#/install">install it first</a>.
-        </p>
+        <div class="notice" style="margin-top: 12px">
+          <span class="notice-title"><Icon name="alert" size={16} /> The game is not installed</span>
+          <p>The server reads its game data from <code>{status.install_dir}</code>: <a href="#/install">install it first</a>.</p>
+        </div>
       {/if}
     </section>
 
     <!-- 2. Setup -->
     <form class="card" onsubmit={setup}>
-      <h2>2. {configured ? 'Settings' : 'Set up'}</h2>
+      <div class="card-head"><span class="head-icon"><Icon name="settings" size={16} /></span><h2>2. {configured ? 'Settings' : 'Set up'}</h2></div>
       <div class="two">
         <div>
           <label class="field"><span>Server name (shown to players)</span><input bind:value={form.server_name} maxlength="64" /></label>
@@ -273,10 +278,10 @@
             <input bind:value={form.public_host} placeholder="192.168.1.20 or play.example.com" />
           </label>
           <div class="row" style="margin: -4px 0 8px">
-            <button type="button" disabled={!status.lan_ip} onclick={useLan}>
+            <button type="button" class="btn" disabled={!status.lan_ip} onclick={useLan}>
               Use my LAN address{status.lan_ip ? ` (${status.lan_ip})` : ''}
             </button>
-            <button type="button" onclick={lookupPublicIp} title="Contacts api.ipify.org once, only when you click">Look up my public IP</button>
+            <button type="button" class="btn" onclick={lookupPublicIp} title="Contacts api.ipify.org once, only when you click">Look up my public IP</button>
           </div>
           {#if ipNote}<p class="hint">{ipNote}</p>{/if}
           <p class="hint">
@@ -308,8 +313,8 @@
           </label>
           <p class="hint">The password is used once to create the account on your server and is not stored or written to any file.</p>
 
-          <div class="notice" style="margin-top: 8px">
-            <b>Port forwarding</b> (only for players outside your network):
+          <div class="notice info" style="margin-top: 8px">
+            <span class="notice-title"><Icon name="globe" size={16} /> Port forwarding</span> <span class="hint">only for players outside your network</span>
             <ul style="margin: 4px 0 0; padding-left: 18px">
               {#each rules as r (r.port)}<li><code>{r.port}</code> {r.proto}: {r.what}</li>{/each}
             </ul>
@@ -325,7 +330,7 @@
       {/if}
       <div class="actions">
         {#if task === 'setup'}<span class="muted">{step || 'working...'}</span>{/if}
-        <button class="primary" type="submit" disabled={!canSetup}>
+        <button class="btn primary" type="submit" disabled={!canSetup}>
           {configured ? 'Apply settings' : 'Set up and start'}
         </button>
       </div>
@@ -334,18 +339,18 @@
 
     <!-- 3. Run -->
     <section class="card">
-      <h2>3. Run</h2>
+      <div class="card-head"><span class="head-icon"><Icon name="play" size={16} /></span><h2>3. Run</h2></div>
       <div class="row">
-        <span class="pill" class:ok={ready} class:warn={up && !ready} class:bad={run_.state === 'exited' && run_.code !== 0 && run_.code !== null}>
+        <Chip tone={ready ? 'ok' : up ? 'warn' : run_.state === 'exited' && run_.code !== 0 && run_.code !== null ? 'bad' : 'neutral'} dot>
           {runLabel(run_, ready)}
-        </span>
+        </Chip>
         {#if status.info}<span class="muted">{status.info.online} online</span>{/if}
         <span class="grow"></span>
         {#if hostProfile?.role === 'admin' && ready}
-          <button type="button" onclick={() => app.openWebAdmin(hostProfile!.id)} title="Opens the web admin in your browser, already signed in">Open web admin</button>
+          <button type="button" class="btn" onclick={() => app.openWebAdmin(hostProfile!.id)} title="Opens the web admin in your browser, already signed in">Open web admin</button>
         {/if}
-        <button type="button" class="primary" disabled={!configured || up || task !== '' || noGame} onclick={start}>Start</button>
-        <button type="button" class="danger" disabled={!up || task === 'stop'} onclick={stop}>Stop</button>
+        <button type="button" class="btn primary" disabled={!configured || up || task !== '' || noGame} onclick={start}>Start</button>
+        <button type="button" class="btn danger" disabled={!up || task === 'stop'} onclick={stop}>Stop</button>
       </div>
       <label class="check" style="margin-top: 8px">
         <input type="checkbox" checked={status.settings.autostart} disabled={!configured} onchange={(e) => autostart(e.currentTarget.checked)} />
@@ -363,7 +368,7 @@
 
     <!-- 4. Log -->
     <section class="card">
-      <h2>Server log</h2>
+      <div class="card-head"><span class="head-icon"><Icon name="info" size={16} /></span><h2>Server log</h2></div>
       <div class="log" bind:this={logEl} role="log" aria-label="Server log">
         {#if log.length === 0}<span class="muted">Nothing yet. The log appears when the server runs.</span>{/if}
         {#each log as line, i (i)}
@@ -374,12 +379,11 @@
     </section>
   </div>
 {:else}
-  <p class="muted">Loading...</p>
+  <div class="loading"><Spinner size={20} /> Loading...</div>
 {/if}
 
 <style>
   .log :global(.error) { color: var(--danger); }
   .log :global(.warn) { color: var(--warn); }
   .log :global(.launcher) { color: var(--link); }
-  .link { background: none; border: none; padding: 0; color: var(--link); text-decoration: underline; cursor: pointer; }
 </style>

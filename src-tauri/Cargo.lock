@@ -2982,6 +2982,21 @@ name = "poe-hook-deploy"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "poe-hook-mods",
+]
+
+[[package]]
+name = "poe-hook-mod-api"
+version = "0.2.0"
+
+[[package]]
+name = "poe-hook-mods"
+version = "0.2.0"
+dependencies = [
+ "poe-hook-mod-api",
+ "semver",
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -2994,6 +3009,7 @@ dependencies = [
  "flate2",
  "fs4",
  "futures-util",
+ "glib",
  "hex",
  "keyring",
  "libc",

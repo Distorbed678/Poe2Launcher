@@ -9,11 +9,16 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::{
     api::{AccountInfo, ServerInfo},
-    core::{Core, InstallRequest, InstallStatus, LogoutResult, PlayState, ProfileView, UrlOpener},
+    core::{
+        Core, GameVersionView, InstallRequest, InstallStatus, LogoutResult, PlayState, ProfileView,
+        UrlOpener,
+    },
+    desktop::DesktopEntry,
     host::{HostSettings, ServerRelease},
     host_ops::{HostStatus, InstallOutcome, SetupRequest, SetupResult},
     mods::{InstalledMod, InstalledNew},
     settings::Settings,
+    steam::SteamLogin,
     verify::VerifyReport,
 };
 
@@ -27,7 +32,10 @@ fn err(e: anyhow::Error) -> String {
 #[derive(Serialize)]
 pub struct AppInfo {
     pub launcher_version: &'static str,
+    /// The selected game version.
     pub client_version: String,
+    /// Every game version this build supports (the version dropdown), oldest first.
+    pub game_versions: Vec<GameVersionView>,
     pub os: &'static str,
     pub data_dir: String,
     pub config_dir: String,
@@ -37,11 +45,18 @@ pub struct AppInfo {
 pub fn app_info(app: App<'_>) -> AppInfo {
     AppInfo {
         launcher_version: env!("CARGO_PKG_VERSION"),
-        client_version: app.version.version.clone(),
+        client_version: app.version().version,
+        game_versions: app.game_versions().unwrap_or_default(),
         os: std::env::consts::OS,
         data_dir: app.dirs.data.display().to_string(),
         config_dir: app.dirs.config.display().to_string(),
     }
+}
+
+/// Picks the game version everything version-dependent follows; returns the new list.
+#[tauri::command]
+pub fn game_version_set(app: App<'_>, version: String) -> Res<Vec<GameVersionView>> {
+    app.set_game_version(&version).map_err(err)
 }
 
 #[tauri::command]
@@ -212,9 +227,44 @@ pub fn mods_dir(app: App<'_>) -> Res<String> {
     app.mods_dir().map(|p| p.display().to_string()).map_err(err)
 }
 
+/// Starts the game: for a private game version with the given server profile, for "Official
+/// (read-only)" without one (the game's own Steam login; the launcher logs in nowhere).
 #[tauri::command]
-pub async fn play(app: App<'_>, profile_id: String) -> Res<()> {
-    app.inner().play(&profile_id).await.map_err(err)
+pub async fn play(app: App<'_>, profile_id: Option<String>) -> Res<()> {
+    let core = app.inner();
+    if core.version().is_official() {
+        return core.play_official().await.map_err(err);
+    }
+    let id = profile_id.ok_or_else(|| "pick a server first".to_owned())?;
+    core.play(&id).await.map_err(err)
+}
+
+/// Whether DepotDownloader remembers a Steam login.
+#[tauri::command]
+pub fn steam_login_status(app: App<'_>) -> Res<SteamLogin> {
+    app.steam_login().map_err(err)
+}
+
+/// "Log out of Steam": forgets the remembered DepotDownloader login.
+#[tauri::command]
+pub fn steam_logout(app: App<'_>) -> Res<SteamLogin> {
+    app.steam_logout().map_err(err)
+}
+
+/// Linux: is the `.desktop` entry (for the icon and name on Wayland) installed?
+#[tauri::command]
+pub fn desktop_entry_status() -> DesktopEntry {
+    crate::desktop::status()
+}
+
+#[tauri::command]
+pub fn desktop_entry_install() -> Res<DesktopEntry> {
+    crate::desktop::install().map_err(err)
+}
+
+#[tauri::command]
+pub fn desktop_entry_uninstall() -> Res<DesktopEntry> {
+    crate::desktop::uninstall().map_err(err)
 }
 
 #[tauri::command]

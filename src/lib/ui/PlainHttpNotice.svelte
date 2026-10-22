@@ -2,6 +2,7 @@
   import { ipc } from '../ipc';
   import { run } from '../notify.svelte';
   import { plainHttpWarning } from '../url';
+  import Icon from './Icon.svelte';
   import type { ProfileView } from '../types';
 
   let { profile, onchange }: { profile: ProfileView; onchange: () => void | Promise<void> } = $props();
@@ -16,8 +17,9 @@
 
 {#if open}
   <div class="notice" role="alert">
-    <p><b>Unencrypted connection.</b> {text}</p>
+    <span class="notice-title"><Icon name="alert" size={16} /> Unencrypted connection</span>
+    <p>{text}</p>
     <p class="hint">Nothing is sent to this server (no login, no token) until you agree, and the agreement is for this address only.</p>
-    <button type="button" onclick={allow}>I understand, allow plain http for this server</button>
+    <div><button type="button" class="btn sm" onclick={allow}>I understand, allow plain http for this server</button></div>
   </div>
 {/if}

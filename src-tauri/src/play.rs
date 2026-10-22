@@ -81,6 +81,23 @@ pub fn deploy_options(cfg: &PlayConfig, info: &ServerInfo, host: &str) -> Result
     })
 }
 
+/// The deploy for the official servers, exactly what `cargo xtask deploy-client --official`
+/// does: the original gateway list, `mode = "official"`, `login_mode = "steam"`, no trusted
+/// server, no position reports, no output directory. The deploy forces the safety-relevant keys
+/// again; nothing here may add a gateway, a trusted server or a login patch.
+pub fn official_deploy_options(cfg: &PlayConfig) -> DeployOptions {
+    DeployOptions {
+        game_dir: cfg.install_dir.clone(),
+        dll_dir: cfg.dll_dir.clone(),
+        mode: Mode::Official,
+        gateway: None,
+        position_sync_port: None,
+        dump_dir: None,
+        login_mode: LoginMode::Steam,
+        trusted_servers: Vec::new(),
+    }
+}
+
 /// The hook DLLs must be where the settings say, before the deploy copies them.
 pub fn check_dlls(dll_dir: &Path) -> Result<()> {
     let missing: Vec<&str> = [LOADER_BUILD_NAME, CORE_DLL]
@@ -264,6 +281,75 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("instance port")
+        );
+    }
+
+    fn fake_game(c: &PlayConfig) {
+        std::fs::create_dir_all(&c.install_dir).unwrap();
+        std::fs::create_dir_all(&c.dll_dir).unwrap();
+        std::fs::write(c.dll_dir.join("poe_hook.dll"), b"loader").unwrap();
+        std::fs::write(c.dll_dir.join("poe_hook_core.dll"), b"core").unwrap();
+        // The official gateway list as the download leaves it (any bytes; it is only copied).
+        std::fs::write(c.install_dir.join("gateway_list.txt"), b"OFFICIAL-LIST").unwrap();
+    }
+
+    /// Official versus private against a temporary game dir: the official deploy keeps the
+    /// original realm list, trusts nothing, does not patch the login, and even a private
+    /// deploy made earlier in the same folder is turned back.
+    #[test]
+    fn the_official_deploy_is_read_only_and_undoes_a_private_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cfg(tmp.path());
+        fake_game(&c);
+        let read = |name: &str| std::fs::read(c.install_dir.join(name)).unwrap();
+        let toml = || String::from_utf8(read("poe-hook.toml")).unwrap();
+
+        // Official on a fresh download.
+        let o = official_deploy_options(&c);
+        assert_eq!(
+            (o.mode, o.login_mode, o.gateway.is_none()),
+            (Mode::Official, LoginMode::Steam, true)
+        );
+        assert!(
+            o.trusted_servers.is_empty() && o.position_sync_port.is_none() && o.dump_dir.is_none()
+        );
+        let report = poe_hook_deploy::deploy(&o).unwrap();
+        assert_eq!(report.login_mode, Some(LoginMode::Steam));
+        assert!(report.trusted_servers.is_empty() && report.gateway.is_none());
+        let t = toml();
+        assert!(t.contains("mode = \"official\""), "{t}");
+        assert!(t.contains("login_mode = \"steam\""), "{t}");
+        assert!(t.contains("trusted_servers = []"), "{t}");
+        assert!(!t.contains("10.1.2.3"), "{t}");
+        assert_eq!(read("gateway_list.txt"), b"OFFICIAL-LIST");
+        assert_eq!(read("steam_appid.txt"), b"2694490");
+        assert!(c.install_dir.join("version.dll").is_file());
+        // No private token was written anywhere (official play never logs in).
+        assert!(!c.prefix_dir.exists());
+
+        // Private, then official again in the same folder.
+        poe_hook_deploy::deploy(&deploy_options(&c, &info("10.1.2.3"), "10.1.2.3").unwrap())
+            .unwrap();
+        assert_ne!(read("gateway_list.txt"), b"OFFICIAL-LIST");
+        let t = toml();
+        assert!(
+            t.contains("mode = \"private\"") && t.contains("10.1.2.3:20481"),
+            "{t}"
+        );
+        poe_hook_deploy::deploy(&o).unwrap();
+        let t = toml();
+        assert!(
+            t.contains("mode = \"official\"") && t.contains("login_mode = \"steam\""),
+            "{t}"
+        );
+        assert!(
+            t.contains("trusted_servers = []") && !t.contains("10.1.2.3"),
+            "{t}"
+        );
+        assert_eq!(
+            read("gateway_list.txt"),
+            b"OFFICIAL-LIST",
+            "the original list is back"
         );
     }
 

@@ -22,8 +22,9 @@ use crate::{
     play::{self, PlayConfig},
     profiles::{PlainHttp, Profile, ProfileStore, needs_plain_http_confirmation, plain_http},
     settings::Settings,
+    steam,
     verify::{self, VerifyReport},
-    version::VersionFile,
+    version::{OFFICIAL, VersionFile},
 };
 
 /// Receives the events the UI shows (install log, progress, prompts, play status).
@@ -139,11 +140,25 @@ pub enum PlayState {
     Exited { code: Option<i32> },
 }
 
+/// One supported game version, for the version dropdown.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct GameVersionView {
+    pub version: String,
+    pub app_id: u32,
+    /// The "Official (read-only)" entry (`version` is `official`).
+    pub official: bool,
+    /// The version the launcher currently works with.
+    pub selected: bool,
+    /// The newest version this launcher knows.
+    pub newest: bool,
+    /// Installed in its install directory.
+    pub installed: bool,
+}
+
 pub struct Core {
     pub dirs: Dirs,
     pub tokens: Arc<dyn TokenStore>,
     pub events: Arc<dyn Events>,
-    pub version: VersionFile,
     install: Mutex<Option<InstallControl>>,
     play: Mutex<PlayState>,
     /// The hosted `poe-server` process (see `host_ops.rs`).
@@ -162,7 +177,6 @@ impl Core {
             dirs,
             tokens,
             events,
-            version: VersionFile::latest()?,
             install: Mutex::new(None),
             play: Mutex::new(PlayState::Idle),
             host: HostRuntime::new(),
@@ -181,15 +195,91 @@ impl Core {
     }
 
     pub fn set_settings(&self, s: Settings) -> Result<Settings> {
+        let s = s.normalized();
         s.validate()?;
+        // The game version drives install, play, mods and the server package: not while one of
+        // those is busy.
+        let now = VersionFile::resolve(s.game_version.as_deref())?.version;
+        if now != self.version().version {
+            self.ensure_idle("switch the game version")?;
+        }
         s.save(&self.dirs.settings_file())?;
         Ok(s)
+    }
+
+    /// The game version the launcher works with: the one picked in the settings, else the newest
+    /// it supports. An unreadable settings file or a version this build dropped falls back to the
+    /// newest (the settings page shows the error itself).
+    pub fn version(&self) -> VersionFile {
+        let picked = self.settings().ok().and_then(|s| s.game_version);
+        VersionFile::resolve(picked.as_deref())
+            .or_else(|_| VersionFile::latest())
+            .expect("this build embeds at least one version file")
+    }
+
+    /// Every selectable target for the version dropdown: "Official (read-only)" first, then the
+    /// supported private-server versions, newest first.
+    pub fn game_versions(&self) -> Result<Vec<GameVersionView>> {
+        let settings = self.settings()?;
+        let current = self.version().version;
+        let known = VersionFile::known_versions();
+        let newest = known.last().copied().unwrap_or_default();
+        let view = |version: &str, file: &VersionFile, official: bool| {
+            let dir = settings.install_dir_or_default(&self.dirs, version);
+            GameVersionView {
+                version: version.to_owned(),
+                app_id: file.app_id,
+                official,
+                selected: version == current,
+                newest: !official && version == newest,
+                installed: verify::looks_installed(&dir, file),
+            }
+        };
+        let mut out = vec![view(OFFICIAL, &VersionFile::official()?, true)];
+        for v in known.iter().rev() {
+            out.push(view(v, &VersionFile::embedded(v)?, false));
+        }
+        Ok(out)
+    }
+
+    /// Picks the game version (persisted in the settings). Refused while an install, the game or
+    /// the hosted server is running.
+    pub fn set_game_version(&self, version: &str) -> Result<Vec<GameVersionView>> {
+        anyhow::ensure!(
+            VersionFile::is_selectable(version),
+            "unsupported game version {version} (supported: official, {})",
+            VersionFile::known_versions().join(", ")
+        );
+        let mut s = self.settings()?;
+        s.game_version = Some(version.to_owned());
+        self.set_settings(s)?;
+        self.game_versions()
+    }
+
+    /// Errors when an install, the game or the hosted server is running.
+    fn ensure_idle(&self, what: &str) -> Result<()> {
+        if self.install_running() {
+            bail!("cannot {what} while the game is being downloaded");
+        }
+        if matches!(
+            self.play_state(),
+            PlayState::Preparing { .. } | PlayState::Running { .. }
+        ) {
+            bail!("cannot {what} while the game is starting or running");
+        }
+        if matches!(
+            self.host.state(),
+            crate::host_run::RunState::Running { .. } | crate::host_run::RunState::Stopping { .. }
+        ) {
+            bail!("cannot {what} while the hosted server is running");
+        }
+        Ok(())
     }
 
     pub fn install_dir(&self) -> Result<PathBuf> {
         let dir = self
             .settings()?
-            .install_dir_or_default(&self.dirs, &self.version.version);
+            .install_dir_or_default(&self.dirs, &self.version().version);
         reject_steam_paths(&dir, "install directory")?;
         Ok(dir)
     }
@@ -436,16 +526,16 @@ impl Core {
             let d = pin.install_dir(&self.dirs.tools_dir(), a);
             d.join(&a.exe).is_file()
         });
+        let version = self.version();
         Ok(InstallStatus {
-            version: self.version.version.clone(),
-            app_id: self.version.app_id,
-            installed: verify::looks_installed(&dir, &self.version),
+            installed: verify::looks_installed(&dir, &version),
+            version: version.version.clone(),
+            app_id: version.app_id,
             install_dir: dir,
             running: self.install_running(),
             tool_version: pin.version,
             tool_ready,
-            depots: self
-                .version
+            depots: version
                 .depots
                 .iter()
                 .map(|d| DepotView {
@@ -459,7 +549,7 @@ impl Core {
 
     pub async fn verify_install(&self) -> Result<VerifyReport> {
         let dir = self.install_dir()?;
-        let version = self.version.clone();
+        let version = self.version();
         let report = tokio::task::spawn_blocking(move || verify::verify(&dir, &version)).await?;
         self.emit("install:verify", serde_json::to_value(&report)?);
         Ok(report)
@@ -528,7 +618,7 @@ impl Core {
         tokio::fs::create_dir_all(&dir).await?;
         self.check_free_space(&dir)?;
         let job = DownloadJob {
-            version: self.version.clone(),
+            version: self.version(),
             dir: dir.clone(),
             username: req.steam_username.trim().to_owned(),
             remember_password: req.remember_login,
@@ -559,7 +649,16 @@ impl Core {
                 }
             })
         };
-        let outcome = depot::run(&exe, &args, password, etx, input, cancel).await;
+        let outcome = depot::run(
+            &exe,
+            &args,
+            password,
+            etx,
+            input,
+            cancel,
+            Some(&self.dirs.steam_login_home()),
+        )
+        .await;
         let _ = pump.await;
         match outcome? {
             Outcome::Cancelled => {
@@ -590,7 +689,7 @@ impl Core {
     }
 
     fn check_free_space(&self, dir: &std::path::Path) -> Result<()> {
-        let needed = self.version.verify.min_bytes;
+        let needed = self.version().verify.min_bytes;
         if needed == 0 {
             return Ok(());
         }
@@ -632,7 +731,11 @@ impl Core {
     // --- mods --------------------------------------------------------------------------
 
     fn mod_store(&self) -> Result<ModStore> {
-        Ok(ModStore::new(&self.install_dir()?, &self.version.version))
+        let version = self.version();
+        if version.is_official() {
+            bail!("the hook's mod loader loads no mods in official (read-only) mode");
+        }
+        Ok(ModStore::new(&self.install_dir()?, &version.version))
     }
 
     pub fn mods_list(&self) -> Result<Vec<InstalledMod>> {
@@ -694,24 +797,35 @@ impl Core {
                 s.steam_root_or_default()?
             },
             proton: s.proton.clone(),
-            prefix_dir: self.dirs.prefix_dir(),
+            prefix_dir: if self.version().is_official() {
+                self.dirs.prefix_dir_official()
+            } else {
+                self.dirs.prefix_dir()
+            },
             crash_dump_dir: self.dirs.crash_dump_dir(),
             logs_dir: self.dirs.logs_dir(),
         })
     }
 
+    /// Marks the game as starting; refuses a second start.
+    fn begin_play(&self) -> Result<()> {
+        let mut st = self.play.lock().unwrap();
+        if matches!(*st, PlayState::Preparing { .. } | PlayState::Running { .. }) {
+            bail!("the game is already starting or running");
+        }
+        *st = PlayState::Preparing {
+            step: "checking".into(),
+        };
+        Ok(())
+    }
+
     /// Prepares and starts the game for a profile. Returns once the client process is running;
     /// the exit is reported as a `play:status` event.
     pub async fn play(self: &Arc<Self>, profile_id: &str) -> Result<()> {
-        {
-            let mut st = self.play.lock().unwrap();
-            if matches!(*st, PlayState::Preparing { .. } | PlayState::Running { .. }) {
-                bail!("the game is already starting or running");
-            }
-            *st = PlayState::Preparing {
-                step: "checking".into(),
-            };
+        if self.version().is_official() {
+            bail!("Play on the official servers does not use a server profile (play_official)");
         }
+        self.begin_play()?;
         match self.play_inner(profile_id).await {
             Ok(()) => Ok(()),
             Err(e) => {
@@ -721,11 +835,54 @@ impl Core {
         }
     }
 
+    /// Official (read-only) mode: deploys the hook in `mode = "official"` and starts the game
+    /// with the original gateway list and the game's own Steam login. The launcher logs in
+    /// nowhere, writes no token and no private gateway or trusted server.
+    pub async fn play_official(self: &Arc<Self>) -> Result<()> {
+        if !self.version().is_official() {
+            bail!("the official mode is not selected");
+        }
+        if !self.settings()?.official_ack {
+            bail!("read and accept the official-mode warning first");
+        }
+        self.begin_play()?;
+        match self.play_official_inner().await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.set_play(PlayState::Idle);
+                Err(e)
+            }
+        }
+    }
+
+    async fn play_official_inner(self: &Arc<Self>) -> Result<()> {
+        let step = |s: &str| self.set_play(PlayState::Preparing { step: s.into() });
+        let settings = self.settings()?;
+        let cfg = self.play_config(&settings)?;
+        if !verify::looks_installed(&cfg.install_dir, &self.version()) {
+            bail!(
+                "the game is not installed in {}: install it first (Install page)",
+                cfg.install_dir.display()
+            );
+        }
+        play::check_dlls(&cfg.dll_dir)?;
+        step("preparing the Proton prefix");
+        play::ensure_prefix(&cfg).await?;
+        step("deploying the read-only hook");
+        let opts = play::official_deploy_options(&cfg);
+        let report = tokio::task::spawn_blocking(move || poe_hook_deploy::deploy(&opts)).await??;
+        for w in &report.warnings {
+            self.emit("play:warning", json!({"text": w}));
+        }
+        self.launch_game(&cfg).await
+    }
+
     async fn play_inner(self: &Arc<Self>, profile_id: &str) -> Result<()> {
         let step = |s: &str| self.set_play(PlayState::Preparing { step: s.into() });
         let settings = self.settings()?;
         let cfg = self.play_config(&settings)?;
-        if !verify::looks_installed(&cfg.install_dir, &self.version) {
+        let version = self.version();
+        if !verify::looks_installed(&cfg.install_dir, &version) {
             bail!(
                 "the game is not installed in {}: install it first",
                 cfg.install_dir.display()
@@ -741,10 +898,10 @@ impl Core {
 
         step("asking the server");
         let info = client.server_info().await?;
-        if info.version != self.version.version {
+        if info.version != version.version {
             self.emit(
                 "play:warning",
-                json!({"text": format!("the server speaks client {}, this install is {}", info.version, self.version.version)}),
+                json!({"text": format!("the server speaks client {}, this install is {}", info.version, version.version)}),
             );
         }
         let host = play::client_host(&info, &profile.url);
@@ -773,12 +930,18 @@ impl Core {
         for w in &report.warnings {
             self.emit("play:warning", json!({"text": w}));
         }
+        self.launch_game(&cfg).await
+    }
 
-        step("starting the client");
+    /// Starts the client and watches it: `play:status` goes to `running`, later `exited`.
+    async fn launch_game(self: &Arc<Self>, cfg: &PlayConfig) -> Result<()> {
+        self.set_play(PlayState::Preparing {
+            step: "starting the client".into(),
+        });
         std::fs::create_dir_all(&cfg.logs_dir)?;
         let log_path = cfg.logs_dir.join(format!("game-{}.log", now_secs()));
         let log = std::fs::File::create(&log_path).context("creating the game log")?;
-        let mut cmd = play::launch_command(&cfg)?;
+        let mut cmd = play::launch_command(cfg)?;
         cmd.stdout(log.try_clone()?).stderr(log);
         let mut child = tokio::process::Command::from(cmd)
             .kill_on_drop(false)
@@ -791,6 +954,29 @@ impl Core {
             core.set_play(PlayState::Exited { code });
         });
         Ok(())
+    }
+
+    // --- the remembered Steam login ----------------------------------------------------
+
+    /// Whether DepotDownloader remembers a Steam login (and for which account name).
+    pub fn steam_login(&self) -> Result<steam::SteamLogin> {
+        let s = self.settings()?;
+        Ok(steam::status(&self.dirs, &s.steam_username))
+    }
+
+    /// "Log out of Steam": deletes the login token DepotDownloader remembers and clears the
+    /// remembered account name and the "remember" switch in the settings. Only files of the
+    /// launcher's own DepotDownloader are touched, never the Steam client.
+    pub fn steam_logout(&self) -> Result<steam::SteamLogin> {
+        if self.install_running() {
+            bail!("cannot log out of Steam while the game is being downloaded");
+        }
+        steam::forget(&self.dirs)?;
+        let mut s = self.settings()?;
+        s.steam_username.clear();
+        s.remember_steam_login = false;
+        self.set_settings(s)?;
+        self.steam_login()
     }
 }
 

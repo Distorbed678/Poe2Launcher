@@ -327,6 +327,7 @@ async fn play_prepares_everything_and_starts_proton() {
 
     e.core
         .set_settings(Settings {
+            game_version: Some(oldest_version()),
             install_dir: Some(install.clone()),
             dll_dir: Some(dlls),
             steam_root: Some(steam),
@@ -489,4 +490,9 @@ fn real_keyring_roundtrip() {
     store.delete(&id).unwrap();
     store.delete(&id).unwrap();
     assert!(store.get(&id).unwrap().is_none());
+}
+
+/// The version the legacy `install_dir` setting belongs to (the oldest supported one).
+fn oldest_version() -> String {
+    poe2_launcher_lib::version::VersionFile::known_versions()[0].to_owned()
 }

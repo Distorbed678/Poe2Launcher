@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name={{name}}
+GenericName=Game launcher
+Comment={{comment}}
+Exec={{exec}}
+Icon={{icon}}
+Terminal=false
+{{#if categories}}Categories={{categories}}
+{{/if}}StartupNotify=true
+StartupWMClass=org.poe2modding.launcher
+{{#if mime_type}}MimeType={{mime_type}}
+{{/if}}

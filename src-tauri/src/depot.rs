@@ -260,12 +260,11 @@ pub struct DownloadJob {
 pub fn depot_args(job: &DownloadJob) -> Vec<String> {
     let mut a: Vec<String> = vec!["-app".into(), job.version.app_id.to_string()];
     for d in &job.version.depots {
-        a.extend([
-            "-depot".into(),
-            d.id.to_string(),
-            "-manifest".into(),
-            d.manifest.clone(),
-        ]);
+        a.extend(["-depot".into(), d.id.to_string()]);
+        // No manifest = the current build (the official target).
+        if !d.manifest.is_empty() {
+            a.extend(["-manifest".into(), d.manifest.clone()]);
+        }
     }
     a.extend(["-username".into(), job.username.clone()]);
     if job.remember_password {
@@ -444,6 +443,7 @@ pub async fn run(
     events: mpsc::UnboundedSender<DepotEvent>,
     mut input: mpsc::UnboundedReceiver<String>,
     mut cancel: watch::Receiver<bool>,
+    data_home: Option<&Path>,
 ) -> Result<Outcome> {
     let mut cmd = Command::new(exe);
     cmd.args(args)
@@ -454,6 +454,15 @@ pub async fn run(
         // Self-contained .NET would otherwise need the ICU system library.
         .env("DOTNET_SYSTEM_GLOBALIZATION_INVARIANT", "1")
         .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1");
+    // DepotDownloader keeps its remembered login (`account.config`) in .NET's isolated storage,
+    // below the user's local data folder. On Unix that folder follows XDG_DATA_HOME, so the
+    // launcher gives it one of its own and can forget the login (crate::steam).
+    #[cfg(unix)]
+    if let Some(home) = data_home {
+        cmd.env("XDG_DATA_HOME", home);
+    }
+    #[cfg(not(unix))]
+    let _ = data_home;
     let mut child = cmd
         .spawn()
         .with_context(|| format!("starting {}", exe.display()))?;
@@ -626,6 +635,27 @@ mod tests {
     }
 
     #[test]
+    fn the_official_target_names_no_manifests() {
+        let mut j = job(false, false, false);
+        j.version = VersionFile::official().unwrap();
+        assert_eq!(
+            depot_args(&j),
+            [
+                "-app",
+                "2694490",
+                "-depot",
+                "2694491",
+                "-depot",
+                "2694492",
+                "-username",
+                "steamuser",
+                "-dir",
+                "/games/poe2"
+            ]
+        );
+    }
+
+    #[test]
     fn remember_password_is_opt_in() {
         assert!(!depot_args(&job(false, true, false)).contains(&"-remember-password".to_owned()));
         let on = depot_args(&job(true, true, true));
@@ -772,6 +802,7 @@ echo "got $code"
                     etx,
                     irx,
                     crx,
+                    None,
                 )
                 .await
             }
@@ -810,10 +841,55 @@ echo "got $code"
         let (etx, _erx) = mpsc::unbounded_channel();
         let (_itx, irx) = mpsc::unbounded_channel();
         let (_ctx, crx) = watch::channel(false);
-        let out = run(&script, &[], Some(Secret::new("x".into())), etx, irx, crx)
-            .await
-            .unwrap();
+        let out = run(
+            &script,
+            &[],
+            Some(Secret::new("x".into())),
+            etx,
+            irx,
+            crx,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(matches!(out, Outcome::Failed { .. }), "{out:?}");
+    }
+
+    /// The remembered login must land in the launcher's own folder (XDG_DATA_HOME), where
+    /// "Log out of Steam" can find it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_tool_gets_the_launchers_own_data_home() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let script = tmp.path().join("fake-dd");
+        std::fs::write(&script, "#!/bin/sh\necho \"home=$XDG_DATA_HOME\"\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let home = tmp.path().join("steam-login");
+        let mut lines = Vec::new();
+        // Other tests fork at the same time: a freshly written script can be "text file busy".
+        for attempt in 0..10 {
+            let (etx, mut erx) = mpsc::unbounded_channel();
+            let (_itx, irx) = mpsc::unbounded_channel();
+            let (_ctx, crx) = watch::channel(false);
+            match run(&script, &[], None, etx, irx, crx, Some(&home)).await {
+                Ok(out) => {
+                    assert_eq!(out, Outcome::Success);
+                    while let Ok(DepotEvent::Line { text, .. }) = erx.try_recv() {
+                        lines.push(text);
+                    }
+                    break;
+                }
+                Err(e) if attempt < 9 && format!("{e:#}").contains("busy") => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                Err(e) => panic!("{e:#}"),
+            }
+        }
+        assert!(
+            lines.contains(&format!("home={}", home.display())),
+            "{lines:?}"
+        );
     }
 
     #[cfg(unix)]
@@ -827,7 +903,7 @@ echo "got $code"
         let (etx, _erx) = mpsc::unbounded_channel();
         let (_itx, irx) = mpsc::unbounded_channel();
         let (ctx, crx) = watch::channel(false);
-        let t = tokio::spawn(async move { run(&script, &[], None, etx, irx, crx).await });
+        let t = tokio::spawn(async move { run(&script, &[], None, etx, irx, crx, None).await });
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         ctx.send(true).unwrap();
         assert_eq!(t.await.unwrap().unwrap(), Outcome::Cancelled);

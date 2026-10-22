@@ -17,6 +17,13 @@ describe('ipc', () => {
     invoke.mockResolvedValue(undefined);
     await ipc.play('p1');
     expect(invoke).toHaveBeenLastCalledWith('play', { profileId: 'p1' });
+    // The official mode plays without a server profile.
+    await ipc.play(null);
+    expect(invoke).toHaveBeenLastCalledWith('play', { profileId: null });
+    await ipc.setGameVersion('official');
+    expect(invoke).toHaveBeenLastCalledWith('game_version_set', { version: 'official' });
+    await ipc.steamLogout();
+    expect(invoke).toHaveBeenLastCalledWith('steam_logout', undefined);
   });
 
   it('turns rejections into IpcError with readable text', async () => {

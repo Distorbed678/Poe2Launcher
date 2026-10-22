@@ -12,6 +12,10 @@ use serde::Deserialize;
 
 include!(concat!(env!("OUT_DIR"), "/embedded_versions.rs"));
 
+/// The pseudo version "Official (read-only)": the current official build from Steam, played on
+/// the official servers with the hook in its read-only observation mode. Not a version file.
+pub const OFFICIAL: &str = "official";
+
 /// A version file as it is written.
 #[derive(Debug, Deserialize)]
 struct RawVersionFile {
@@ -121,6 +125,42 @@ impl VersionFile {
         Self::embedded(v)
     }
 
+    /// The "Official (read-only)" target: the newest version file's depots and executable, but
+    /// no pinned manifests (DepotDownloader then fetches the current build) and no per-file size
+    /// or checksum expectations (they belong to the pinned build). Its `version` is
+    /// [`OFFICIAL`].
+    pub fn official() -> Result<Self> {
+        let mut v = Self::latest()?;
+        v.version = OFFICIAL.to_owned();
+        for d in &mut v.depots {
+            d.manifest.clear();
+        }
+        v.verify.files.clear();
+        v.verify.exe_sha256 = None;
+        v.verify.exe_sha256_enforce = false;
+        Ok(v)
+    }
+
+    pub fn is_official(&self) -> bool {
+        self.version == OFFICIAL
+    }
+
+    /// A value the `game_version` setting may hold: a supported version or [`OFFICIAL`].
+    pub fn is_selectable(version: &str) -> bool {
+        version == OFFICIAL || Self::known_versions().contains(&version)
+    }
+
+    /// The version the user picked, or the newest embedded one when none is picked (or the
+    /// picked one is no longer supported by this build).
+    pub fn resolve(requested: Option<&str>) -> Result<Self> {
+        match requested.map(str::trim).filter(|v| !v.is_empty()) {
+            Some(OFFICIAL) => Self::official(),
+            Some(v) if Self::known_versions().contains(&v) => Self::embedded(v),
+            _ => Self::latest(),
+        }
+    }
+
+    /// Every supported client version, oldest first (`build_revision` order).
     pub fn known_versions() -> Vec<&'static str> {
         EMBEDDED_VERSIONS.iter().map(|(v, _)| *v).collect()
     }
@@ -205,6 +245,35 @@ mod tests {
         }
         let latest = VersionFile::latest().unwrap();
         assert_eq!(&latest.version, known.last().unwrap());
+    }
+
+    #[test]
+    fn resolve_falls_back_to_the_newest() {
+        let latest = VersionFile::latest().unwrap().version;
+        for req in [None, Some(""), Some("  "), Some("0.0.1-gone")] {
+            assert_eq!(VersionFile::resolve(req).unwrap().version, latest);
+        }
+        for v in VersionFile::known_versions() {
+            assert_eq!(VersionFile::resolve(Some(v)).unwrap().version, v);
+        }
+    }
+
+    #[test]
+    fn official_has_the_depots_but_no_pins() {
+        let o = VersionFile::official().unwrap();
+        let l = VersionFile::latest().unwrap();
+        assert!(o.is_official() && !l.is_official());
+        assert_eq!(o.app_id, l.app_id);
+        assert_eq!(
+            o.depots.iter().map(|d| d.id).collect::<Vec<_>>(),
+            l.depots.iter().map(|d| d.id).collect::<Vec<_>>()
+        );
+        assert!(o.depots.iter().all(|d| d.manifest.is_empty()));
+        assert!(o.verify.files.is_empty() && o.verify.exe_sha256.is_none());
+        assert_eq!(o.verify.exe, l.verify.exe);
+        assert_eq!(VersionFile::resolve(Some("official")).unwrap(), o);
+        assert!(VersionFile::is_selectable("official"));
+        assert!(!VersionFile::known_versions().contains(&"official"));
     }
 
     fn base(extra: &str) -> String {

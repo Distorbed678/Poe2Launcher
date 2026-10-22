@@ -1,6 +1,9 @@
 //! User settings (`settings.json`): paths and choices. Nothing secret lives here.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -12,8 +15,24 @@ pub const DEFAULT_PROTON: &str = "Proton - Experimental";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Settings {
-    /// Where the game is installed; empty = `<data>/game/<version>`.
+    /// Old single install directory (before the game version switch): read from old files and
+    /// moved into `install_dirs` for the oldest supported version by [`Settings::normalize`],
+    /// never written back.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub install_dir: Option<PathBuf>,
+    /// Where each game version is installed, by version; a missing or empty entry means
+    /// `<data>/game/<version>`.
+    pub install_dirs: BTreeMap<String, PathBuf>,
+    /// The game version the launcher works with (install, play, mods, server packages); empty or
+    /// unknown = the newest one it supports.
+    pub game_version: Option<String>,
+    /// The user read the official-mode warning and agreed (asked once, before the first Play on
+    /// the official servers).
+    pub official_ack: bool,
+    /// Minimize the launcher while the game runs and bring it back when the game ends.
+    pub minimize_while_playing: bool,
+    /// Draw the launcher's own title bar and window frame (default); off = the system frame.
+    pub custom_frame: bool,
     /// Build output of the hook DLLs (`poe_hook.dll`, `poe_hook_core.dll`), e.g.
     /// `modules/client-hook/target/x86_64-pc-windows-msvc/release`; empty = `<data>/hook-dlls`.
     pub dll_dir: Option<PathBuf>,
@@ -37,6 +56,11 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             install_dir: None,
+            install_dirs: BTreeMap::new(),
+            game_version: None,
+            custom_frame: true,
+            official_ack: false,
+            minimize_while_playing: false,
             dll_dir: None,
             steam_root: None,
             proton: DEFAULT_PROTON.into(),
@@ -52,7 +76,8 @@ impl Default for Settings {
 impl Settings {
     pub fn load(path: &Path) -> Result<Self> {
         match std::fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text)
+            Ok(text) => serde_json::from_str::<Self>(&text)
+                .map(Self::normalized)
                 .with_context(|| format!("{} is not valid settings JSON", path.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
@@ -63,7 +88,22 @@ impl Settings {
         write_atomic(path, serde_json::to_string_pretty(self)?.as_bytes())
     }
 
-    /// Refuses directories inside a Steam library and unknown themes.
+    /// Moves an old single `install_dir` into `install_dirs` (it belongs to the oldest supported
+    /// version, the only one that existed when it was written) and drops empty entries.
+    pub fn normalized(mut self) -> Self {
+        if let Some(dir) = self.install_dir.take()
+            && let Some(oldest) = crate::version::VersionFile::known_versions().first()
+        {
+            self.install_dirs.entry((*oldest).to_owned()).or_insert(dir);
+        }
+        self.install_dirs.retain(|_, d| !d.as_os_str().is_empty());
+        if self.game_version.as_deref().is_some_and(str::is_empty) {
+            self.game_version = None;
+        }
+        self
+    }
+
+    /// Refuses directories inside a Steam library, unknown themes and unknown game versions.
     pub fn validate(&self) -> Result<()> {
         for (what, dir) in [
             ("install directory", &self.install_dir),
@@ -72,6 +112,20 @@ impl Settings {
             if let Some(d) = dir {
                 reject_steam_paths(d, what)?;
             }
+        }
+        for (version, dir) in &self.install_dirs {
+            anyhow::ensure!(
+                crate::version::VersionFile::is_selectable(version),
+                "install directory for unknown game version {version}"
+            );
+            reject_steam_paths(dir, "install directory")?;
+        }
+        if let Some(v) = &self.game_version {
+            anyhow::ensure!(
+                crate::version::VersionFile::is_selectable(v),
+                "unsupported game version {v} (supported: official, {})",
+                crate::version::VersionFile::known_versions().join(", ")
+            );
         }
         if !matches!(self.theme.as_str(), "dark" | "light") {
             anyhow::bail!("theme must be dark or light");
@@ -83,8 +137,9 @@ impl Settings {
     }
 
     pub fn install_dir_or_default(&self, dirs: &Dirs, version: &str) -> PathBuf {
-        self.install_dir
-            .clone()
+        self.install_dirs
+            .get(version)
+            .cloned()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| dirs.default_install_dir(version))
     }
@@ -158,5 +213,76 @@ mod tests {
             Path::new("/r/data/game/0.5.5e")
         );
         assert_eq!(s.dll_dir_or_default(&dirs), Path::new("/r/data/hook-dlls"));
+    }
+
+    #[test]
+    fn an_old_single_install_dir_moves_to_the_oldest_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("s.json");
+        std::fs::write(&f, r#"{"install_dir":"/games/poe2"}"#).unwrap();
+        let s = Settings::load(&f).unwrap();
+        let oldest = crate::version::VersionFile::known_versions()[0];
+        assert_eq!(s.install_dir, None);
+        assert_eq!(s.install_dirs[oldest], Path::new("/games/poe2"));
+        // Written back in the new shape only.
+        s.save(&f).unwrap();
+        let text = std::fs::read_to_string(&f).unwrap();
+        assert!(!text.contains("\"install_dir\""), "{text}");
+        assert_eq!(Settings::load(&f).unwrap(), s);
+        // An explicit entry for that version wins over the old field.
+        let both = Settings {
+            install_dir: Some("/old".into()),
+            install_dirs: BTreeMap::from([(oldest.to_owned(), PathBuf::from("/new"))]),
+            ..Settings::default()
+        }
+        .normalized();
+        assert_eq!(both.install_dirs[oldest], Path::new("/new"));
+    }
+
+    #[test]
+    fn install_dirs_are_per_version() {
+        let dirs = Dirs::under(Path::new("/r"));
+        let s = Settings {
+            install_dirs: BTreeMap::from([("0.5.5e".to_owned(), PathBuf::from("/games/a"))]),
+            ..Settings::default()
+        };
+        assert_eq!(
+            s.install_dir_or_default(&dirs, "0.5.5e"),
+            Path::new("/games/a")
+        );
+        // Another version does not inherit it.
+        assert_eq!(
+            s.install_dir_or_default(&dirs, "0.6.0"),
+            Path::new("/r/data/game/0.6.0")
+        );
+    }
+
+    #[test]
+    fn game_version_and_install_dirs_are_checked() {
+        let known = crate::version::VersionFile::known_versions()[0];
+        let mut s = Settings {
+            game_version: Some(known.to_owned()),
+            ..Settings::default()
+        };
+        assert!(s.validate().is_ok());
+        s.game_version = Some("9.9.9".into());
+        assert!(s.validate().is_err());
+        s.game_version = Some("official".into());
+        assert!(s.validate().is_ok());
+        s.game_version = Some(String::new());
+        assert_eq!(s.normalized().game_version, None, "empty means newest");
+        let s = Settings {
+            install_dirs: BTreeMap::from([("9.9.9".to_owned(), PathBuf::from("/x"))]),
+            ..Settings::default()
+        };
+        assert!(s.validate().is_err());
+        let s = Settings {
+            install_dirs: BTreeMap::from([(
+                known.to_owned(),
+                PathBuf::from("/home/u/.local/share/Steam/steamapps/common/Path of Exile 2"),
+            )]),
+            ..Settings::default()
+        };
+        assert!(s.validate().is_err());
     }
 }

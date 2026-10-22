@@ -58,6 +58,16 @@ impl Dirs {
     pub fn default_install_dir(&self, version: &str) -> PathBuf {
         self.data.join("game").join(version)
     }
+    /// The Proton prefix for the official servers (Linux): separate from the private-server
+    /// prefix, so no private login or realm choice leaks into it.
+    pub fn prefix_dir_official(&self) -> PathBuf {
+        self.data.join("proton-prefix-official")
+    }
+    /// DepotDownloader's "local data" folder (`XDG_DATA_HOME` for it on Unix): its remembered
+    /// Steam login lives below it.
+    pub fn steam_login_home(&self) -> PathBuf {
+        self.data.join("steam-login")
+    }
     /// The Proton prefix the launcher owns (Linux).
     pub fn prefix_dir(&self) -> PathBuf {
         self.data.join("proton-prefix")

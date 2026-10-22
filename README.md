@@ -1,18 +1,22 @@
 # Poe2Launcher
 
-Desktop launcher for the Path of Exile 2 **0.5.5e** private server (Poe2ModdingProject): one small program per player that does what `cargo xtask deploy-client` and `run-client` do for the developer.
+Desktop launcher for the Path of Exile 2 private server (Poe2ModdingProject; supports every client build that has a `versions/<version>.toml`, today 0.5.5e, plus an *Official (read-only)* mode): one small program per player that does what `cargo xtask deploy-client` and `run-client` do for the developer.
 
-Tauri 2 (Rust backend in `src-tauri/`) with a Svelte 5 + Vite + TypeScript UI (`src/`). Dark theme by default.
+Tauri 2 (Rust backend in `src-tauri/`) with a Svelte 5 + Vite + TypeScript UI (`src/`). Dark theme by default (light in Settings), a custom title bar and window frame, page transitions and other small animations that follow `prefers-reduced-motion`. A development preview without the backend: `npm run dev`, then open `http://localhost:1420/?mock` in a browser (`&versions` adds a second game version, `&official` the official mode, `&empty`, `&fresh`, `&mods`, `&theme=light`; the mock lives in `src/lib/mock.ts` and is not in release builds).
+
+**Window:** a title bar with the icon, the **game version dropdown**, an update badge and minimize / maximize / close buttons (drag to move, double-click to maximize, resize handles on all edges), a sidebar with the pages, and the Play bar at the bottom.
 
 | Page | Does |
 |---|---|
-| Servers | profiles: a name and the cluster's web API address; *Check* shows `GET /server` (realm, version, players online, whether registration is open) and refreshes the account's role. A plain `http://` address to another machine asks for a confirmation first (see Security). An admin sees *Open web admin* |
+| Game version dropdown (title bar) | *Official (read-only)* first, then every embedded private version (newest first). Saved as `game_version` in `settings.json`. Drives the install folder and depots, verify, deploy, Play, the Host server-release filter, mods and the server compatibility marks. Refused while an install, the game or the hosted server runs |
+| Servers | profiles: a name and the cluster's web API address; *Check* shows `GET /server` (realm, version, players online, whether registration is open) and refreshes the account's role. A server reporting another client version is marked *incompatible* / *needs client X* (with *Switch*). A plain `http://` address to another machine asks for a confirmation first (see Security). An admin sees *Open web admin* |
 | Account | log in (`POST /api/v1/login`, kind `launcher`), create an account (`POST /register`), log out (`POST /logout` revokes the token). The token lives in the OS keyring only. Shows the role; admins get *Open web admin* |
-| Install | downloads client 0.5.5e from Steam depots with the player's own Steam login, then verifies it |
-| Host a server | download the matching `poe-server` release (SHA-256 checked) or pick a local package, set it up (name, ports, public host, registration, admin account), start and stop it with a streamed log, optional autostart; the server is added to Servers |
-| Mods | list, add from a folder or zip, enable/disable, load order, compatibility check |
-| Settings | install dir, hook DLL dir, Proton (Linux), Steam download options, theme, launcher updates (check, release notes, download + verify + restart) |
-| Play (footer) | deploys the hook, writes the auto-login token, starts the game, shows the status |
+| Install | downloads the selected client from Steam depots with the player's own Steam login (pinned manifests for a private version, the current build for Official), then verifies it |
+| Host a server | download the matching `poe-server` release (SHA-256 checked) or pick a local package, set it up (name, ports, public host, registration, admin account), start and stop it with a streamed log, optional autostart; the server is added to Servers. Private versions only |
+| Mods | list, add from a folder or zip, enable/disable, load order, compatibility check. Private versions only |
+| Settings | per-version install dir, hook DLL dir, Proton (Linux), **Steam account** (*Logged in as X* / *Not logged in*, *Log out of Steam*), Steam download options, theme, window frame (own or system), *Minimize the launcher while the game is running* (off by default), the desktop entry (Linux), launcher updates (check, release notes, download + verify + restart) |
+| About | launcher version, the supported game versions with their state, data folders, disclaimer |
+| Play (footer) | private version: deploys the hook, writes the auto-login token, starts the game. Official: the one-time risk confirmation, then the read-only deploy (`mode = "official"`, empty `trusted_servers`, original gateway list, Steam login in the game) and the game; no token, no login. Shows the status |
 
 The full guide (set-up, first run, troubleshooting) is `docs/guides/launcher.md` in Poe2ModdingProject; this file is the developer's view.
 
@@ -35,7 +39,8 @@ In a checkout of Poe2ModdingProject the launcher is `modules/launcher`; its `src
 ## Layout
 
 ```
-src/                 Svelte UI: App.svelte (shell + Play bar), pages/, lib/ (ipc.ts, install.ts, mods.ts, update.ts (self-update logic), ...)
+src/                 Svelte UI: App.svelte (window shell, nav, Play bar), pages/, lib/ (ipc.ts, app.svelte.ts (state), gameversion.ts, install.ts, mods.ts, update.ts, frame.ts (window calls), motion.ts, mock.ts (dev preview), ui/ (Icon, Dropdown, Switch, Chip, Progress, Toasts, ConfirmDialog, TitleBar, ...)), app.css (tokens + all components), assets/
+assets/icon.svg      the app icon source (original artwork); `npx tauri icon assets/icon.svg` regenerates src-tauri/icons/
 src-tauri/src/
   core.rs            service layer (everything the UI can do; no Tauri types, testable)
   commands.rs        thin #[tauri::command] wrappers; lib.rs wires events to the window
@@ -46,7 +51,9 @@ src-tauri/src/
   profiles.rs        server profiles (profiles.json, no secrets)
   keystore.rs        TokenStore: KeyringStore (keyring crate) / MemoryStore (tests)
   settings.rs        settings.json
-  version.rs         versions/<version>.toml (embedded by build.rs: every file, newest build_revision last)
+  version.rs         versions/<version>.toml (embedded by build.rs: every file, newest build_revision last); VersionFile::resolve (picked, else newest), VersionFile::official() (no pinned manifests)
+  steam.rs           the remembered Steam login (account.config of DepotDownloader): status and log out
+  desktop.rs         Linux .desktop entry + icons for the AppImage (install / uninstall / status)
   depot.rs           DepotDownloader: pinned fetch, argument builder, prompt/progress parser, runner
   verify.rs          install verification
   play.rs            deploy options, token file, Proton/native launch (poe-hook-deploy)
@@ -64,10 +71,12 @@ client-hook/         submodule: Poe2ClientHook (poe-hook-deploy used as a path d
 
 | What | Where |
 |---|---|
-| App identifier (`org.poe2modding.launcher`) | Names the window class and the webview storage folder only; the keyring service and folders below are fixed names and do not derive from it |
+| App identifier (`org.poe2modding.launcher`) | The window's Wayland `app_id` / WM class (`glib::set_prgname` in `lib.rs`), so the compositor finds `org.poe2modding.launcher.desktop`, and the webview storage folder; the keyring service and folders below are fixed names and do not derive from it |
 | Launcher token (+ account name, expiry) | OS keyring: service `poe2-launcher`, user = profile id (Secret Service / Credential Manager / Keychain). **Never a file** |
 | Profiles, settings | `<config>/poe2-launcher/profiles.json`, `settings.json` (`~/.config/...`, `%APPDATA%\...`) |
-| DepotDownloader, game, Proton prefix, logs | `<data>/poe2-launcher/{tools,game/<version>,proton-prefix,logs,crash-dumps}` |
+| DepotDownloader, games, Proton prefixes, logs | `<data>/poe2-launcher/{tools,game/<version>,game/official,proton-prefix,proton-prefix-official,logs,crash-dumps}` |
+| Remembered Steam login (DepotDownloader's `account.config`, a token, never the password) | `<data>/poe2-launcher/steam-login/IsolatedStorage/...` on Linux (the tool runs with `XDG_DATA_HOME` there); `%LOCALAPPDATA%\IsolatedStorage` on Windows. *Log out of Steam* deletes it |
+| `.desktop` entry and icons (only if you press *Install desktop entry*) | `~/.local/share/applications/org.poe2modding.launcher.desktop`, `~/.local/share/icons/hicolor/*/apps/org.poe2modding.launcher.*` |
 | Server settings (name, ports, public host, admin name; no secrets) | `<config>/poe2-launcher/host.json` |
 | Server package, database, log | `<data>/poe2-launcher/server/{packages,downloads,data,server.log}` (the database is outside the package, so an update keeps accounts and characters) |
 | Admin password (Host a server) | typed in the UI, written once to the standard input of `poe-server account create <name> --password-stdin` (a one-shot command, the server is not started) and wiped. Not stored, not in a file, not on a command line |
@@ -77,7 +86,9 @@ client-hook/         submodule: Poe2ClientHook (poe-hook-deploy used as a path d
 
 **Never the Steam install.** The launcher does not read or write `steamapps/common/Path of Exile 2` or `compatdata/2694490`. Install, DLL and similar directories inside a Steam library are refused (`paths.rs`); the Proton prefix is its own. On Linux it only reads Proton itself from `<steam root>/steamapps/common/<Proton>` to start it.
 
-## Game install
+## Game versions and install
+
+The dropdown lists every embedded `versions/<version>.toml` (`build.rs` embeds all of them, so adding a build is adding a file; see `docs/guides/new-game-version.md` in Poe2ModdingProject) plus *Official (read-only)*, which reuses the newest file's depots without manifests, with its own folder `game/official` and the hook in read-only mode. The selection is `Settings.game_version`; install folders are per version (`Settings.install_dirs`; the old single `install_dir` is moved to the oldest version when read).
 
 The version file (`versions/<version>.toml`, a byte-identical copy of the main repo's file, which is the single definition of a supported build): for 0.5.5e app 2694490; depot 2694491 manifest 7366357142270402355 (content), depot 2694492 manifest 246779027001700092 (Windows exe). Both go into one directory in file order (exe over content), in **one** DepotDownloader run so Steam Guard is asked once.
 
@@ -94,7 +105,7 @@ The version file (`versions/<version>.toml`, a byte-identical copy of the main r
 4. `poe_hook_deploy::deploy`: `gateway_list.txt` with one entry, `version.dll` + `poe_hook_core.dll` from the configured DLL directory, `poe-hook.toml` with `mode = "private"`, `login_mode = "standalone"`, `trusted_servers` = the server's login and instance `host:port`, `steam_appid.txt`.
 5. Launch: Linux `proton run PathOfExileSteam.exe --success-event 0` through `ProtonLaunch` (launcher-owned prefix; the prefix is created with `proton run wineboot -u` on first use; Steam must be running). Windows: `PathOfExileSteam.exe --success-event 0` directly (written, not testable on Linux CI). Game output goes to `<data>/logs/game-<time>.log`.
 
-Official servers are never touched: the deploy is always private mode.
+Official (read-only) is the one other deploy: `play::official_deploy_options` writes exactly what `cargo xtask deploy-client --official` does and never a trusted server or gateway; its tests are in `play.rs` and `tests/version_switch.rs`.
 
 The hook DLLs come from the *Hook DLL directory* setting: a build of Poe2ClientHook (`cargo build --release --target x86_64-pc-windows-msvc` there, or `cargo xtask build-dll` in Poe2ModdingProject), i.e. `modules/client-hook/target/x86_64-pc-windows-msvc/release` holding `poe_hook.dll` and `poe_hook_core.dll`. Bundling them is not done yet.
 
@@ -112,7 +123,7 @@ The launcher validates `mod.toml` (all rules of the spec, every problem listed),
 
 ```sh
 npm run check && npm test                 # svelte-check + tsc, vitest
-cd src-tauri && cargo test                # unit tests + tests/core_flow.rs (mock server, mock keyring, fake Proton), tests/web_admin.rs (Open web admin, plain-http guard) and tests/host_flow.rs (mock GitHub API, fake packages)
+cd src-tauri && cargo test                # unit tests + tests/version_switch.rs (version switch, official Play deploy, Steam log-out) + tests/core_flow.rs (mock server, mock keyring, fake Proton), tests/web_admin.rs (Open web admin, plain-http guard) and tests/host_flow.rs (mock GitHub API, fake packages)
 cargo test --test fetch_tool -- --ignored          # downloads the pinned DepotDownloader, runs `-V` (never logs in)
 cargo test --test host_flow real_package -- --ignored --nocapture   # a REAL server package: install, set up, start, status, log, stop (needs POE2_TEST_SERVER_PACKAGE and POE2_TEST_GAME_DIR, see the test's comment)
 cargo test --test core_flow real_keyring -- --ignored   # needs an unlocked system keyring
@@ -122,6 +133,10 @@ POE_LAUNCHER_TEST_URL=http://127.0.0.1:18080 POE_LAUNCHER_TEST_USER=u POE_LAUNCH
 
 GitHub Actions (`.github/workflows/ci.yml`): Ubuntu (WebKitGTK dev packages, `npm run check/test/build`, `cargo fmt --check`, `clippy -D warnings`, `cargo test`) and Windows (`cargo check`). The submodules (client-hook and its nested protocol, both public) are fetched by `actions/checkout` with `submodules: recursive`.
 
+## Window, icon and Wayland
+
+`tauri.conf.json`: `decorations: false`, `visible: false` (shown from `setup` after the frame choice and the window icon are applied), square window (a transparent one rendered only partly under WebKitGTK/Wayland in a test), capabilities for minimize, maximize, close, start-dragging, start-resize-dragging and set-decorations. `data-tauri-drag-region` marks the draggable parts of the title bar; the resize handles are `ui/ResizeHandles.svelte` (`startResizeDragging`). `Settings.custom_frame = false` switches to the system frame at runtime. On Linux `lib.rs` sets GTK's program name to the identifier before GTK starts, which is the Wayland `app_id`; the window icon on Wayland comes from the `.desktop` file (the bundle's, or the one written by Settings, Desktop entry; `desktop-template.desktop` gives the bundled one `StartupWMClass=org.poe2modding.launcher` and `Categories=Game;`).
+
 ## Self-update and releases
 
 The launcher updates itself with the Tauri updater plugin (`tauri-plugin-updater`, `tauri-plugin-process` for the restart; capabilities `updater:default`, `process:allow-restart`). `tauri.conf.json` has `bundle.createUpdaterArtifacts = true` and `plugins.updater`: the endpoint `https://github.com/Distorbed678/Poe2Launcher/releases/latest/download/latest.json`, the **public** signing key (`pubkey`), Windows install mode `passive`. The UI side is `src/lib/update.ts` (logic, tested with a fake plugin), `update.svelte.ts` (state), `ui/UpdatePanel.svelte` (Settings) and the badge in the top bar: a check runs at start; a failed check (404 on a private repo or before the first release, offline) is the quiet "no update info" state, a failed download or signature check is shown as an error and installs nothing. Linux updates replace the AppImage in place (only works when running as an AppImage); Windows runs the NSIS installer.
@@ -130,7 +145,7 @@ The launcher updates itself with the Tauri updater plugin (`tauri-plugin-updater
 
 ## Commands the UI invokes
 
-`app_info`, `profiles_list`, `profile_add`, `profile_update`, `profile_remove`, `profile_confirm_plain_http`, `server_info`, `account_login`, `account_register`, `account_logout`, `account_refresh`, `web_admin_open`, `settings_get`, `settings_set`, `install_status`, `install_start`, `install_input`, `install_cancel`, `install_verify`, `mods_list`, `mod_install`, `mod_enable`, `mod_disable`, `mod_move`, `mod_auto_order`, `mod_remove`, `mods_dir`, `play`, `play_state`, and for hosting `host_status`, `host_find_release`, `host_install_latest`, `host_install_local`, `host_lan_ip`, `host_public_ip`, `host_setup`, `host_start`, `host_stop`, `host_log_tail`, `host_set_autostart`, `host_open_guide`. Arguments are camelCase from JS (`profileId`, `overrideCompat`); errors are readable strings.
+`app_info`, `profiles_list`, `profile_add`, `profile_update`, `profile_remove`, `profile_confirm_plain_http`, `server_info`, `account_login`, `account_register`, `account_logout`, `account_refresh`, `web_admin_open`, `settings_get`, `settings_set`, `game_version_set`, `steam_login_status`, `steam_logout`, `desktop_entry_status`, `desktop_entry_install`, `desktop_entry_uninstall`, `install_status`, `install_start`, `install_input`, `install_cancel`, `install_verify`, `mods_list`, `mod_install`, `mod_enable`, `mod_disable`, `mod_move`, `mod_auto_order`, `mod_remove`, `mods_dir`, `play` (the profile id is optional: the official mode takes none), `play_state`, and for hosting `host_status`, `host_find_release`, `host_install_latest`, `host_install_local`, `host_lan_ip`, `host_public_ip`, `host_setup`, `host_start`, `host_stop`, `host_log_tail`, `host_set_autostart`, `host_open_guide`. Arguments are camelCase from JS (`profileId`, `overrideCompat`); errors are readable strings.
 
 Events: `install:state` (`fetching_tool`, `downloading`, `verifying`, `done`, `failed`, `cancelled`), `install:log`, `install:progress`, `install:prompt` (Steam Guard), `install:verify`, `play:status` (`idle`, `preparing`, `running`, `exited`), `play:warning`, and for hosting `host:status` (`stopped`, `running`, `stopping`, `exited`), `host:log`, `host:progress`, `host:setup` (step text), `host:installed`.
 

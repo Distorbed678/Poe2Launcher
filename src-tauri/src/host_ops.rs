@@ -102,7 +102,16 @@ impl Core {
         s.save(self.host_dirs().settings_file())
     }
 
+    /// Hosting is for the private game versions; "Official (read-only)" has no server.
+    fn host_private_only(&self) -> Result<()> {
+        if self.version().is_official() {
+            bail!("hosting a server needs a private game version: pick one in the version menu");
+        }
+        Ok(())
+    }
+
     fn host_begin(&self) -> Result<BusyGuard<'_>> {
+        self.host_private_only()?;
         let mut busy = self.host_busy.lock().unwrap();
         if *busy {
             bail!("another server task (download, install or setup) is still running");
@@ -126,7 +135,7 @@ impl Core {
             .package_dir
             .as_ref()
             .context("no server package is installed yet: download or pick one first")?;
-        host::inspect_package(dir, &self.version.version, self.host_os())
+        host::inspect_package(dir, &self.version().version, self.host_os())
     }
 
     pub async fn host_status(&self) -> Result<HostStatus> {
@@ -156,8 +165,8 @@ impl Core {
             package,
             package_problem,
             platform: self.host_os().to_owned(),
-            game_version: self.version.version.clone(),
-            game_installed: verify::looks_installed(&install_dir, &self.version),
+            game_version: self.version().version,
+            game_installed: verify::looks_installed(&install_dir, &self.version()),
             install_dir,
             run,
             info,
@@ -193,8 +202,9 @@ impl Core {
     }
 
     pub async fn host_find_release_at(&self, api_base: &str) -> Result<ServerRelease> {
+        self.host_private_only()?;
         let releases = host::fetch_releases(api_base).await?;
-        host::pick_release(&releases, &self.version.version, self.host_os())
+        host::pick_release(&releases, &self.version().version, self.host_os())
     }
 
     /// Finds, downloads, verifies (SHA-256 against the release's `.sha256`) and installs the
@@ -302,7 +312,7 @@ impl Core {
         let (src, packages, game, os) = (
             source.to_path_buf(),
             dirs.packages(),
-            self.version.version.clone(),
+            self.version().version,
             self.host_os(),
         );
         let package =
@@ -426,7 +436,7 @@ impl Core {
         }
         let pkg = self.host_package(&s)?;
         let install = self.install_dir()?;
-        if !verify::looks_installed(&install, &self.version) {
+        if !verify::looks_installed(&install, &self.version()) {
             bail!(
                 "the game is not installed in {}: the server reads its game data from there. \
                  Install it first (Install page)",
@@ -503,6 +513,7 @@ impl Core {
     // --- run ------------------------------------------------------------------------------
 
     pub async fn host_start(&self) -> Result<()> {
+        self.host_private_only()?;
         let s = self.host_settings()?;
         if !s.configured {
             bail!("set the server up first");
@@ -512,7 +523,7 @@ impl Core {
         }
         let pkg = self.host_package(&s)?;
         let install = self.install_dir()?;
-        if !verify::looks_installed(&install, &self.version) {
+        if !verify::looks_installed(&install, &self.version()) {
             bail!(
                 "the game is not installed in {}: install it first (Install page)",
                 install.display()

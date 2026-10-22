@@ -43,7 +43,16 @@ export interface LogoutResult {
 }
 
 export interface Settings {
-  install_dir: string | null;
+  /** Where each game version is installed, by version (`official` included); missing = the default folder. */
+  install_dirs: Record<string, string>;
+  /** The selected game version, `official`, or null = the newest supported. */
+  game_version: string | null;
+  /** The official-mode warning was accepted. */
+  official_ack: boolean;
+  /** Minimize the launcher while the game runs, bring it back when the game ends. */
+  minimize_while_playing: boolean;
+  /** The launcher's own title bar and frame (off: the system frame). */
+  custom_frame: boolean;
   dll_dir: string | null;
   steam_root: string | null;
   proton: string;
@@ -140,9 +149,40 @@ export type PlayState =
   | { state: 'running'; pid: number | null }
   | { state: 'exited'; code: number | null };
 
+/** One entry of the version dropdown ("Official (read-only)" first, then the private versions, newest first). */
+export interface GameVersion {
+  /** `official` or a client version such as `0.5.5e`. */
+  version: string;
+  app_id: number;
+  official: boolean;
+  selected: boolean;
+  newest: boolean;
+  installed: boolean;
+}
+
+/** The Steam login DepotDownloader remembers. */
+export interface SteamLogin {
+  remembered: boolean;
+  account: string | null;
+  files: string[];
+}
+
+/** The Linux `.desktop` entry that gives the window its icon on Wayland. */
+export interface DesktopEntry {
+  supported: boolean;
+  installed: boolean;
+  exec: string | null;
+  stale: boolean;
+  file: string | null;
+  current_exec: string | null;
+  appimage: boolean;
+}
+
 export interface AppInfo {
   launcher_version: string;
+  /** The selected game version (`official` for the official mode). */
   client_version: string;
+  game_versions: GameVersion[];
   os: string;
   data_dir: string;
   config_dir: string;

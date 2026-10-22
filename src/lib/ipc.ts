@@ -1,8 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  AccountInfo, AppInfo, HostSettings, HostStatus, InstallOutcome, InstallRequest, InstallStatus, InstalledMod,
+  AccountInfo, AppInfo, DesktopEntry, GameVersion, HostSettings, HostStatus, InstallOutcome, InstallRequest, InstallStatus, InstalledMod,
   InstalledNew, LogoutResult, PlayState, ProfileView, ServerInfo, ServerRelease, Settings, SetupRequest,
-  SetupResult, VerifyReport,
+  SetupResult, SteamLogin, VerifyReport,
 } from './types';
 
 /** An error from the backend: always carries a readable message. */
@@ -29,6 +29,8 @@ export async function call<T>(cmd: string, args?: Record<string, unknown>): Prom
 
 export const ipc = {
   appInfo: () => call<AppInfo>('app_info'),
+  /** Picks the game version (or `official`); everything version-dependent follows. Refused while busy. */
+  setGameVersion: (version: string) => call<GameVersion[]>('game_version_set', { version }),
   profiles: () => call<ProfileView[]>('profiles_list'),
   profileAdd: (name: string, url: string, confirmPlainHttp = false) =>
     call<ProfileView>('profile_add', { name, url, confirmPlainHttp }),
@@ -60,7 +62,13 @@ export const ipc = {
   modAutoOrder: () => call<string[]>('mod_auto_order'),
   modRemove: (id: string) => call<void>('mod_remove', { id }),
   modsDir: () => call<string>('mods_dir'),
-  play: (profileId: string) => call<void>('play', { profileId }),
+  /** Private versions: the server profile; the official mode takes none (the game's own Steam login). */
+  play: (profileId: string | null) => call<void>('play', { profileId }),
+  steamLogin: () => call<SteamLogin>('steam_login_status'),
+  steamLogout: () => call<SteamLogin>('steam_logout'),
+  desktopEntry: () => call<DesktopEntry>('desktop_entry_status'),
+  desktopEntryInstall: () => call<DesktopEntry>('desktop_entry_install'),
+  desktopEntryUninstall: () => call<DesktopEntry>('desktop_entry_uninstall'),
   playState: () => call<PlayState>('play_state'),
   hostStatus: () => call<HostStatus>('host_status'),
   hostFindRelease: () => call<ServerRelease>('host_find_release'),
