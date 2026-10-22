@@ -47,6 +47,8 @@ src-tauri/src/
   api.rs             web API client (reqwest, rustls), incl. GET /me and POST /web-token
   host.rs            Host a server, pure parts: settings (host.json), release lookup (GitHub), checksum, package check and extraction, server.toml from server.example.toml, LAN/public IP, port check
   host_run.rs        the poe-server process: start/stop, streamed log ring buffer, one-shot commands
+  hook.rs            Client hook, pure parts: release lookup (GitHub, tag `hook-v*`), asset names, `release.json`, per-file SHA-256 check, safe install into `<data>/hook/packages/<version>`, which package serves a game version
+  hook_ops.rs        Client hook on Core: status, check for an update, download + verify + install, `hook_dll_dir` (manual directory > downloaded > old default folder), the check before each deploy
   host_ops.rs        Host a server on Core: install (download or local), setup (config + admin account), start/stop/status
   profiles.rs        server profiles (profiles.json, no secrets)
   keystore.rs        TokenStore: KeyringStore (keyring crate) / MemoryStore (tests)
@@ -107,7 +109,7 @@ The version file (`versions/<version>.toml`, a byte-identical copy of the main r
 
 Official (read-only) is the one other deploy: `play::official_deploy_options` writes exactly what `cargo xtask deploy-client --official` does and never a trusted server or gateway; its tests are in `play.rs` and `tests/version_switch.rs`.
 
-The hook DLLs come from the *Hook DLL directory* setting: a build of Poe2ClientHook (`cargo build --release --target x86_64-pc-windows-msvc` there, or `cargo xtask build-dll` in Poe2ModdingProject), i.e. `modules/client-hook/target/x86_64-pc-windows-msvc/release` holding `poe_hook.dll` and `poe_hook_core.dll`. Bundling them is not done yet.
+The hook DLLs (`hook.rs`, `hook_ops.rs`, UI: `ui/HookPanel.svelte`, `ui/SetupChecklist.svelte`, `lib/hook.ts`) come from, in this order: the *Hook DLL directory* setting (advanced; a build of Poe2ClientHook, e.g. `modules/client-hook/target/x86_64-pc-windows-msvc/release`), the **client hook downloaded by the launcher**, or files in the old default folder `<data>/hook-dlls`. The download is the newest stable release of `Distorbed678/Poe2ClientHook` (tag `hook-v*`, asset `poe-hook-v<ver>-game-<games>-windows-x86_64.zip` + `.sha256`) whose name lists the selected game version (Official uses the newest private version's). The archive is checked against the `.sha256`, unpacked with the same guards as server packages, every file is checked against the size and SHA-256 in the package's `release.json` (an unlisted file refuses the package) and the package must support the game version. It lives in `<data>/hook/packages/<hook version>/`; the same hashes are checked again before each deploy. Without any hook Play is blocked. Details and release process: `docs/guides/launcher.md` (Client hook) and `docs/guides/releasing-hook.md` in Poe2ModdingProject.
 
 ## Mods
 
@@ -123,9 +125,10 @@ The launcher validates `mod.toml` (all rules of the spec, every problem listed),
 
 ```sh
 npm run check && npm test                 # svelte-check + tsc, vitest
-cd src-tauri && cargo test                # unit tests + tests/version_switch.rs (version switch, official Play deploy, Steam log-out) + tests/core_flow.rs (mock server, mock keyring, fake Proton), tests/web_admin.rs (Open web admin, plain-http guard) and tests/host_flow.rs (mock GitHub API, fake packages)
+cd src-tauri && cargo test                # unit tests + tests/version_switch.rs (version switch, official Play deploy, Steam log-out) + tests/core_flow.rs (mock server, mock keyring, fake Proton), tests/web_admin.rs (Open web admin, plain-http guard) tests/host_flow.rs (mock GitHub API, fake server packages) and tests/hook_flow.rs (mock GitHub API, fake hook packages: find, download, verify, install, refusals, override)
 cargo test --test fetch_tool -- --ignored          # downloads the pinned DepotDownloader, runs `-V` (never logs in)
 cargo test --test host_flow real_package -- --ignored --nocapture   # a REAL server package: install, set up, start, status, log, stop (needs POE2_TEST_SERVER_PACKAGE and POE2_TEST_GAME_DIR, see the test's comment)
+cargo test --test hook_flow real_release -- --ignored --nocapture   # the REAL hook release of Poe2ClientHook from GitHub (network; needs POE2_TEST_HOOK_REAL=1)
 cargo test --test core_flow real_keyring -- --ignored   # needs an unlocked system keyring
 POE_LAUNCHER_TEST_URL=http://127.0.0.1:18080 POE_LAUNCHER_TEST_USER=u POE_LAUNCHER_TEST_PASS=p \
   cargo test --test core_flow real_server -- --nocapture   # against a real poe-server
@@ -145,9 +148,9 @@ The launcher updates itself with the Tauri updater plugin (`tauri-plugin-updater
 
 ## Commands the UI invokes
 
-`app_info`, `profiles_list`, `profile_add`, `profile_update`, `profile_remove`, `profile_confirm_plain_http`, `server_info`, `account_login`, `account_register`, `account_logout`, `account_refresh`, `web_admin_open`, `settings_get`, `settings_set`, `game_version_set`, `steam_login_status`, `steam_logout`, `desktop_entry_status`, `desktop_entry_install`, `desktop_entry_uninstall`, `install_status`, `install_start`, `install_input`, `install_cancel`, `install_verify`, `mods_list`, `mod_install`, `mod_enable`, `mod_disable`, `mod_move`, `mod_auto_order`, `mod_remove`, `mods_dir`, `play` (the profile id is optional: the official mode takes none), `play_state`, and for hosting `host_status`, `host_find_release`, `host_install_latest`, `host_install_local`, `host_lan_ip`, `host_public_ip`, `host_setup`, `host_start`, `host_stop`, `host_log_tail`, `host_set_autostart`, `host_open_guide`. Arguments are camelCase from JS (`profileId`, `overrideCompat`); errors are readable strings.
+`app_info`, `profiles_list`, `profile_add`, `profile_update`, `profile_remove`, `profile_confirm_plain_http`, `server_info`, `account_login`, `account_register`, `account_logout`, `account_refresh`, `web_admin_open`, `settings_get`, `settings_set`, `game_version_set`, `steam_login_status`, `steam_logout`, `desktop_entry_status`, `desktop_entry_install`, `desktop_entry_uninstall`, `install_status`, `install_start`, `install_input`, `install_cancel`, `install_verify`, `mods_list`, `mod_install`, `mod_enable`, `mod_disable`, `mod_move`, `mod_auto_order`, `mod_remove`, `mods_dir`, `play` (the profile id is optional: the official mode takes none), `play_state`, for the client hook `hook_status`, `hook_check`, `hook_install_latest`, and for hosting `host_status`, `host_find_release`, `host_install_latest`, `host_install_local`, `host_lan_ip`, `host_public_ip`, `host_setup`, `host_start`, `host_stop`, `host_log_tail`, `host_set_autostart`, `host_open_guide`. Arguments are camelCase from JS (`profileId`, `overrideCompat`); errors are readable strings.
 
-Events: `install:state` (`fetching_tool`, `downloading`, `verifying`, `done`, `failed`, `cancelled`), `install:log`, `install:progress`, `install:prompt` (Steam Guard), `install:verify`, `play:status` (`idle`, `preparing`, `running`, `exited`), `play:warning`, and for hosting `host:status` (`stopped`, `running`, `stopping`, `exited`), `host:log`, `host:progress`, `host:setup` (step text), `host:installed`.
+Events: `install:state` (`fetching_tool`, `downloading`, `verifying`, `done`, `failed`, `cancelled`), `install:log`, `install:progress`, `install:prompt` (Steam Guard), `install:verify`, `play:status` (`idle`, `preparing`, `running`, `exited`), `play:warning`, for the client hook `hook:progress` and `hook:step`, `hook:installed`, and for hosting `host:status` (`stopped`, `running`, `stopping`, `exited`), `host:log`, `host:progress`, `host:setup` (step text), `host:installed`.
 
 ## Security
 

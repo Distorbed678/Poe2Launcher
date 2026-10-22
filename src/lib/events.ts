@@ -59,3 +59,12 @@ export async function listenHost(h: {
   ]);
   return () => subs.forEach((u) => u());
 }
+
+/** The client hook download: progress of the archive and the current step. */
+export async function listenHook(h: { onProgress: Handler<HostProgress>; onStep: Handler<string> }): Promise<UnlistenFn> {
+  const subs = await Promise.all([
+    listen<HostProgress>('hook:progress', (e) => h.onProgress(e.payload)),
+    listen<{ step: string }>('hook:step', (e) => h.onStep(e.payload.step)),
+  ]);
+  return () => subs.forEach((u) => u());
+}

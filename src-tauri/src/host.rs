@@ -393,7 +393,7 @@ pub async fn fetch_releases(api_base: &str) -> Result<Vec<GhRelease>> {
     }
 }
 
-fn http_client() -> Result<reqwest::Client> {
+pub(crate) fn http_client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(15))
         .timeout(std::time::Duration::from_secs(600))
@@ -640,7 +640,7 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<()> {
 
 /// The folder inside `staging` that holds `release.json` (the package's own top folder, or
 /// `staging` itself).
-fn find_package_root(staging: &Path) -> Result<PathBuf> {
+pub(crate) fn find_package_root(staging: &Path) -> Result<PathBuf> {
     if staging.join("release.json").is_file() {
         return Ok(staging.to_path_buf());
     }

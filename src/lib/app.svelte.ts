@@ -1,12 +1,13 @@
-import { ipc } from './ipc';
+import { errorText, ipc } from './ipc';
 import { initialInstall, reduce, type InstallEvent } from './install';
-import { listenInstall, listenPlay } from './events';
+import { listenHook, listenInstall, listenPlay } from './events';
+import { hookReady } from './hook';
 import { run, toasts } from './notify.svelte';
 import { updater } from './update.svelte';
 import { ask } from './confirm.svelte';
 import { isPlainHttpBlocked } from './url';
 import { compatBlocker, isOfficial, serverCompat, versionLabel, type Compat } from './gameversion';
-import type { AppInfo, GameVersion, InstallStatus, PlayState, ProfileView, ServerInfo, Settings } from './types';
+import type { AppInfo, GameVersion, HookCheck, HookStatus, InstallStatus, PlayState, ProfileView, ServerInfo, Settings } from './types';
 
 class AppState {
   info = $state<AppInfo | null>(null);
@@ -19,6 +20,14 @@ class AppState {
   /** What each server's `GET /server` last said (or the error), by profile id. */
   infos = $state<Record<string, ServerInfo | string>>({});
   switching = $state(false);
+
+  /** The client hook: what Play would use, the newest release GitHub has, and a running download. */
+  hook = $state<HookStatus | null>(null);
+  hookCheck = $state<HookCheck | null>(null);
+  hookTask = $state<'' | 'check' | 'install'>('');
+  hookProgress = $state<{ done: number; total: number } | null>(null);
+  hookStep = $state('');
+  hookError = $state('');
 
   selected = $derived(this.profiles.find((p) => p.id === this.settings?.selected_profile) ?? this.profiles[0] ?? null);
   /** The selected game version (`official` for the official mode). */
@@ -39,13 +48,19 @@ class AppState {
       (s) => (this.play = s),
       (text) => toasts.show('error', text),
     );
-    await Promise.all([this.refreshProfiles(), this.refreshSettings(), this.refreshStatus()]);
+    await listenHook({
+      onProgress: (p) => (this.hookProgress = { done: p.done, total: p.total }),
+      onStep: (s) => (this.hookStep = s),
+    });
+    await Promise.all([this.refreshProfiles(), this.refreshSettings(), this.refreshStatus(), this.refreshHook()]);
     this.info = (await run(() => ipc.appInfo())) ?? null;
     this.play = (await run(() => ipc.playState())) ?? this.play;
     this.ready = true;
     // Roles may have changed on the servers since the last run: re-read them quietly.
     void this.refreshRoles();
     void this.checkServers();
+    // A newer hook release: look once at start, quietly.
+    if (this.hook?.installed) void this.checkHook(true);
     // Launcher self-update: look once at start; a failure is a quiet state, never a toast.
     void updater.check();
   }
@@ -117,6 +132,50 @@ class AppState {
     }
   }
 
+  async refreshHook(): Promise<void> {
+    try {
+      this.hook = await ipc.hookStatus();
+    } catch (e) {
+      // Not worth a toast: the panel shows the hook as unknown and Play says why it is blocked.
+      this.hookError = errorText(e);
+    }
+  }
+
+  /** Asks GitHub for the newest hook release for the selected game version. `quiet`: no error text (start-up). */
+  async checkHook(quiet = false): Promise<void> {
+    if (this.hookTask) return;
+    this.hookTask = 'check';
+    if (!quiet) this.hookError = '';
+    try {
+      this.hookCheck = await ipc.hookCheck();
+    } catch (e) {
+      this.hookCheck = null;
+      if (!quiet) this.hookError = errorText(e);
+    }
+    this.hookTask = '';
+  }
+
+  /** Downloads, verifies and installs the newest hook release (or tells that it is current). */
+  async installHook(): Promise<void> {
+    if (this.hookTask) return;
+    this.hookTask = 'install';
+    this.hookError = '';
+    this.hookProgress = null;
+    this.hookStep = '';
+    try {
+      const out = await ipc.hookInstallLatest();
+      toasts.show('ok', out.source === 'current' ? `Client hook ${out.hook.version} is the newest` : `Client hook ${out.hook.version} installed`);
+      await this.refreshHook();
+      this.hookCheck = this.hookCheck && { ...this.hookCheck, update_available: false };
+      void this.checkHook(true);
+    } catch (e) {
+      this.hookError = errorText(e);
+    }
+    this.hookTask = '';
+    this.hookProgress = null;
+    this.hookStep = '';
+  }
+
   async refreshStatus(): Promise<void> {
     this.status = (await run(() => ipc.installStatus())) ?? this.status;
   }
@@ -131,6 +190,7 @@ class AppState {
   async saveSettings(next: Settings, ok?: string): Promise<Settings | undefined> {
     const s = await run(() => ipc.setSettings({ ...next }), ok);
     if (s) {
+      void this.refreshHook();
       this.settings = s;
       document.documentElement.dataset.theme = s.theme;
       document.documentElement.dataset.frame = s.custom_frame ? 'custom' : 'system';
@@ -145,7 +205,10 @@ class AppState {
     try {
       const list = await run(() => ipc.setGameVersion(version));
       if (list) {
-        await Promise.all([this.refreshSettings(), this.refreshStatus(), this.refreshInfo()]);
+        this.hookCheck = null;
+        this.hookError = '';
+        await Promise.all([this.refreshSettings(), this.refreshStatus(), this.refreshInfo(), this.refreshHook()]);
+        if (this.hook?.installed) void this.checkHook(true);
         // A fresh install log and verification belong to the other version.
         this.install = initialInstall();
         toasts.show('ok', `Game version: ${versionLabel(version)}`);
@@ -182,6 +245,7 @@ class AppState {
   /** Why Play is not possible right now, or null. */
   get playBlocker(): string | null {
     if (!this.status?.installed) return 'Install the game first (Install page)';
+    if (this.hook && !hookReady(this.hook)) return 'Get the client hook first (Install page)';
     if (this.play.state === 'preparing' || this.play.state === 'running') return 'The game is already starting or running';
     if (this.official) return null;
     if (!this.selected) return 'Add a server first (Servers page)';

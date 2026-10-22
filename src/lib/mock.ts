@@ -58,6 +58,17 @@ export function installMock(params: URLSearchParams): void {
       { id: 2694492, manifest: current().official ? '' : '246779027001700092', role: 'exe (Windows)' },
     ],
   });
+  // The client hook: `?nohook` starts without one, `?hookupdate` pretends a newer release exists.
+  const hookDir = '/home/user/.local/share/poe2-launcher/hook/packages';
+  const hookPkg = (version: string) => ({ dir: `${hookDir}/${version}`, name: `poe-hook-v${version}-game-0.5.5e-windows-x86_64`, version, game_versions: ['0.5.5e'], mod_abi: 1, commit: 'abc1234' });
+  let hookVersion: string | null = params.has('nohook') ? null : params.has('hookupdate') ? '0.1.0' : '0.2.0';
+  const hookStatus = () => ({
+    game_version: current().official ? '0.5.5e' : current().version, repo: 'Distorbed678/Poe2ClientHook',
+    source: settings.dll_dir ? { kind: 'manual' } : hookVersion ? { kind: 'downloaded', version: hookVersion } : { kind: 'missing' },
+    dll_dir: settings.dll_dir ?? (hookVersion ? `${hookDir}/${hookVersion}` : '/home/user/.local/share/poe2-launcher/hook-dlls'),
+    manual_dir: settings.dll_dir, installed: hookVersion ? hookPkg(hookVersion) : null, other_installed: [], busy: false,
+  });
+  const hookRelease = () => ({ tag: 'hook-v0.2.0', version: '0.2.0', game_versions: ['0.5.5e'], prerelease: false, asset_name: 'poe-hook-v0.2.0-game-0.5.5e-windows-x86_64.zip', asset_url: 'https://example.invalid/a.zip', size: 5400000, sha256_url: 'https://example.invalid/a.sha256' });
   const info = (): AppInfo => ({
     launcher_version: '0.2.0', client_version: current().version, game_versions: versions(), os: 'linux',
     data_dir: '/home/user/.local/share/poe2-launcher', config_dir: '/home/user/.config/poe2-launcher',
@@ -87,6 +98,9 @@ export function installMock(params: URLSearchParams): void {
         case 'steam_login_status': return { remembered, account: remembered ? settings.steam_username : null, files: [] };
         case 'steam_logout': remembered = false; settings = { ...settings, steam_username: '', remember_steam_login: false }; return { remembered, account: null, files: [] };
         case 'desktop_entry_status': return { supported: true, installed: false, exec: null, stale: false, file: '/home/user/.local/share/applications/org.poe2modding.launcher.desktop', current_exec: '/home/user/Apps/Poe2-Launcher.AppImage', appimage: true };
+        case 'hook_status': return hookStatus();
+        case 'hook_check': return { release: hookRelease(), update_available: hookVersion !== '0.2.0' };
+        case 'hook_install_latest': hookVersion = '0.2.0'; return { hook: hookPkg('0.2.0'), sha256: 'f'.repeat(64), source: 'download' };
         case 'host_status': return {
           settings: { server_name: 'My private realm', cluster_id: 'my-cluster', login_port: 20481, instance_port: 6112, web_port: 8080, public_host: '192.168.1.20', web_public: false, open_registration: true, admin_name: 'admin', autostart: false, package_dir: null, configured: false, profile_id: null },
           package: null, package_problem: null, platform: 'linux', game_version: current().version, game_installed: current().installed,

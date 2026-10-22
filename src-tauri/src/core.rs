@@ -165,6 +165,8 @@ pub struct Core {
     pub host: HostRuntime,
     /// Set while the host page downloads, installs or sets up: one such job at a time.
     pub(crate) host_busy: Mutex<bool>,
+    /// Set while the client hook is downloaded and installed.
+    pub(crate) hook_busy: Mutex<bool>,
 }
 
 impl Core {
@@ -181,6 +183,7 @@ impl Core {
             play: Mutex::new(PlayState::Idle),
             host: HostRuntime::new(),
             host_busy: Mutex::new(false),
+            hook_busy: Mutex::new(false),
         }))
     }
 
@@ -790,7 +793,7 @@ impl Core {
     fn play_config(&self, s: &Settings) -> Result<PlayConfig> {
         Ok(PlayConfig {
             install_dir: self.install_dir()?,
-            dll_dir: s.dll_dir_or_default(&self.dirs),
+            dll_dir: self.hook_dll_dir(s).0,
             steam_root: if cfg!(windows) {
                 PathBuf::new()
             } else {
@@ -865,7 +868,7 @@ impl Core {
                 cfg.install_dir.display()
             );
         }
-        play::check_dlls(&cfg.dll_dir)?;
+        self.check_hook(&settings).await?;
         step("preparing the Proton prefix");
         play::ensure_prefix(&cfg).await?;
         step("deploying the read-only hook");
@@ -906,7 +909,7 @@ impl Core {
         }
         let host = play::client_host(&info, &profile.url);
         let options = play::deploy_options(&cfg, &info, &host)?;
-        play::check_dlls(&cfg.dll_dir)?;
+        self.check_hook(&settings).await?;
 
         step("preparing the Proton prefix");
         play::ensure_prefix(&cfg).await?;

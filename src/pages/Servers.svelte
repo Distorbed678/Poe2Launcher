@@ -17,6 +17,7 @@
   import Chip from '../lib/ui/Chip.svelte';
   import Empty from '../lib/ui/Empty.svelte';
   import Spinner from '../lib/ui/Spinner.svelte';
+  import SetupChecklist from '../lib/ui/SetupChecklist.svelte';
 
   let name = $state('');
   let url = $state('');
@@ -96,8 +97,10 @@
 
 <PageHead icon="servers" title="Servers" sub="A server profile is the address of a cluster's web API. Pick one in the bar below to play on it." />
 
+<SetupChecklist />
+
 <div class="two">
-  <section class="card" bind:this={formEl}>
+  <section class="card" id="add-server" bind:this={formEl}>
     <div class="card-head">
       <span class="head-icon"><Icon name={editing ? 'edit' : 'plus'} size={16} /></span>
       <h2>{editing ? 'Edit server' : 'Add a server'}</h2>

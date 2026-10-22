@@ -9,6 +9,7 @@
   import Chip from '../lib/ui/Chip.svelte';
   import Spinner from '../lib/ui/Spinner.svelte';
   import Progress from '../lib/ui/Progress.svelte';
+  import HookPanel from '../lib/ui/HookPanel.svelte';
   import { versionLabel } from '../lib/gameversion';
 
   let username = $state(app.settings?.steam_username ?? '');
@@ -164,6 +165,8 @@
     {/if}
   </section>
 </div>
+
+<div style="margin-top: 18px"><HookPanel /></div>
 
 {#if ins.verify}
   <section class="card" style="margin-top: 18px">

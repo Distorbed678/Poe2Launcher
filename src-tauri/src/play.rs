@@ -106,8 +106,9 @@ pub fn check_dlls(dll_dir: &Path) -> Result<()> {
         .collect();
     if !missing.is_empty() {
         bail!(
-            "{} not found in {}. Build the hook (`cargo build --release --target \
-             x86_64-pc-windows-msvc` in Poe2ClientHook) and set the DLL directory in Settings",
+            "{} not found in {}. Download the client hook (Install page), or build it \
+             (`cargo build --release --target x86_64-pc-windows-msvc` in Poe2ClientHook) and set \
+             the Hook DLL directory in Settings",
             missing.join(" and "),
             dll_dir.display()
         );

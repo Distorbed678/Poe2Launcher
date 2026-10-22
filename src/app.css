@@ -491,3 +491,6 @@ dialog.modal::backdrop { background: rgb(4 6 12 / 0.62); backdrop-filter: blur(3
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; animation-delay: 0ms !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
   .progress.active .fill::after, .play-btn.ready::after { display: none; }
 }
+
+/* client hook card */
+.hook-card dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }

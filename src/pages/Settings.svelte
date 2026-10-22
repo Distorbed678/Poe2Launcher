@@ -114,12 +114,17 @@
           <span class="hint">Empty: <code>{app.info?.data_dir ?? ''}/game/{ver}</code>. Each game version has its own folder. Never a Steam library folder.</span>
         </div>
         <div class="field">
-          <span>Hook DLL directory</span>
+          <span>Hook DLL directory <span class="muted">(advanced override)</span></span>
           <div class="row">
             <input class="grow" bind:value={draft.dll_dir} placeholder="(default)" />
             <button type="button" class="btn" onclick={() => pick('dll_dir')}>Browse</button>
           </div>
-          <span class="hint">Build output of Poe2ClientHook holding poe_hook.dll and poe_hook_core.dll, e.g. modules/client-hook/target/x86_64-pc-windows-msvc/release.</span>
+          <span class="hint">
+            Leave empty: the launcher downloads the client hook itself (Install page) and uses that. Set this only to use your own build of
+            Poe2ClientHook (a folder holding poe_hook.dll and poe_hook_core.dll, e.g. modules/client-hook/target/x86_64-pc-windows-msvc/release);
+            it then wins over the downloaded hook.
+            {#if app.hook}Now using: <b>{app.hook.source.kind === 'downloaded' ? `downloaded ${app.hook.source.version}` : app.hook.source.kind === 'manual' ? 'your directory' : app.hook.source.kind === 'legacy' ? 'files in the default folder' : 'nothing yet'}</b>.{/if}
+          </span>
         </div>
         {#if linux}
           <div class="field">

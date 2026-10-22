@@ -270,3 +270,55 @@ export interface SetupResult {
   admin_existed: boolean;
   config_file: string;
 }
+
+// --- Client hook -------------------------------------------------------------------------------
+
+/** Where Play takes the hook DLLs from. */
+export type DllSource =
+  | { kind: 'manual' }
+  | { kind: 'downloaded'; version: string }
+  | { kind: 'legacy' }
+  | { kind: 'missing' };
+
+export interface InstalledHook {
+  dir: string;
+  name: string;
+  version: string;
+  game_versions: string[];
+  mod_abi: number;
+  commit: string;
+}
+
+export interface HookStatus {
+  /** The game version the hook is matched against (Official uses the newest private version). */
+  game_version: string;
+  repo: string;
+  source: DllSource;
+  dll_dir: string;
+  manual_dir: string | null;
+  installed: InstalledHook | null;
+  other_installed: InstalledHook[];
+  busy: boolean;
+}
+
+export interface HookRelease {
+  tag: string;
+  version: string;
+  game_versions: string[];
+  prerelease: boolean;
+  asset_name: string;
+  asset_url: string;
+  size: number;
+  sha256_url: string;
+}
+
+export interface HookCheck {
+  release: HookRelease;
+  update_available: boolean;
+}
+
+export interface HookOutcome {
+  hook: InstalledHook;
+  sha256: string | null;
+  source: 'download' | 'current';
+}

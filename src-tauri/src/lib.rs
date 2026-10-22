@@ -6,6 +6,8 @@ pub mod commands;
 pub mod core;
 pub mod depot;
 pub mod desktop;
+pub mod hook;
+pub mod hook_ops;
 pub mod host;
 pub mod host_ops;
 pub mod host_run;
@@ -151,6 +153,9 @@ pub fn run() {
             commands::profile_confirm_plain_http,
             commands::account_refresh,
             commands::web_admin_open,
+            commands::hook_status,
+            commands::hook_check,
+            commands::hook_install_latest,
             commands::host_status,
             commands::host_find_release,
             commands::host_install_latest,

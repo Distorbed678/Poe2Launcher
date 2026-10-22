@@ -14,6 +14,7 @@ use crate::{
         UrlOpener,
     },
     desktop::DesktopEntry,
+    hook_ops::{HookCheck, HookOutcome, HookStatus},
     host::{HostSettings, ServerRelease},
     host_ops::{HostStatus, InstallOutcome, SetupRequest, SetupResult},
     mods::{InstalledMod, InstalledNew},
@@ -270,6 +271,23 @@ pub fn desktop_entry_uninstall() -> Res<DesktopEntry> {
 #[tauri::command]
 pub fn play_state(app: App<'_>) -> PlayState {
     app.play_state()
+}
+
+// --- Client hook --------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn hook_status(app: App<'_>) -> Res<HookStatus> {
+    app.hook_status().map_err(err)
+}
+
+#[tauri::command]
+pub async fn hook_check(app: App<'_>) -> Res<HookCheck> {
+    app.hook_check().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn hook_install_latest(app: App<'_>) -> Res<HookOutcome> {
+    app.hook_install_latest().await.map_err(err)
 }
 
 // --- Host a server ------------------------------------------------------------------------

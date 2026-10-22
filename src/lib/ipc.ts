@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  AccountInfo, AppInfo, DesktopEntry, GameVersion, HostSettings, HostStatus, InstallOutcome, InstallRequest, InstallStatus, InstalledMod,
+  AccountInfo, AppInfo, DesktopEntry, GameVersion, HookCheck, HookOutcome, HookStatus, HostSettings, HostStatus, InstallOutcome, InstallRequest, InstallStatus, InstalledMod,
   InstalledNew, LogoutResult, PlayState, ProfileView, ServerInfo, ServerRelease, Settings, SetupRequest,
   SetupResult, SteamLogin, VerifyReport,
 } from './types';
@@ -70,6 +70,10 @@ export const ipc = {
   desktopEntryInstall: () => call<DesktopEntry>('desktop_entry_install'),
   desktopEntryUninstall: () => call<DesktopEntry>('desktop_entry_uninstall'),
   playState: () => call<PlayState>('play_state'),
+  hookStatus: () => call<HookStatus>('hook_status'),
+  /** Asks GitHub for the newest hook release for the selected game version. */
+  hookCheck: () => call<HookCheck>('hook_check'),
+  hookInstallLatest: () => call<HookOutcome>('hook_install_latest'),
   hostStatus: () => call<HostStatus>('host_status'),
   hostFindRelease: () => call<ServerRelease>('host_find_release'),
   hostInstallLatest: () => call<InstallOutcome>('host_install_latest'),
