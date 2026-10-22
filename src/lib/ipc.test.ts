@@ -12,8 +12,10 @@ beforeEach(() => {
 describe('ipc', () => {
   it('passes camelCase arguments to the command', async () => {
     invoke.mockResolvedValue(['core']);
-    await ipc.modEnable('my-mod', true);
-    expect(invoke).toHaveBeenCalledWith('mod_enable', { id: 'my-mod', overrideCompat: true });
+    await ipc.modSetEnabled('p1', 'my-mod', '1.0.0', true, true);
+    expect(invoke).toHaveBeenCalledWith('mod_set_enabled', { scope: 'p1', id: 'my-mod', version: '1.0.0', enabled: true, force: true });
+    await ipc.modSyncApply('p1');
+    expect(invoke).toHaveBeenLastCalledWith('mod_sync_apply', { profileId: 'p1', ids: null });
     invoke.mockResolvedValue(undefined);
     await ipc.play('p1');
     expect(invoke).toHaveBeenLastCalledWith('play', { profileId: 'p1' });

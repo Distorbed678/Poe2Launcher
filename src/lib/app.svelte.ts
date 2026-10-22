@@ -1,6 +1,6 @@
 import { errorText, ipc } from './ipc';
 import { initialInstall, reduce, type InstallEvent } from './install';
-import { listenHook, listenInstall, listenPlay } from './events';
+import { listenHook, listenInstall, listenMods, listenPlay } from './events';
 import { hookReady } from './hook';
 import { run, toasts } from './notify.svelte';
 import { updater } from './update.svelte';
@@ -9,7 +9,8 @@ import { isPlainHttpBlocked } from './url';
 import { RateTracker } from './rate.svelte';
 import { installBytesDone, installBytesTotal } from './transfer';
 import { compatBlocker, isOfficial, serverCompat, versionLabel, type Compat } from './gameversion';
-import type { NewsFeed, AppInfo, GameVersion, HookCheck, HookStatus, InstallStatus, PlayState, ProfileView, ServerInfo, Settings, SpaceCheck } from './types';
+import { needsDialog, syncBlocker } from './mods';
+import type { NewsFeed, AppInfo, GameVersion, HookCheck, HookStatus, InstallStatus, PlayState, ProfileView, ServerInfo, Settings, SpaceCheck, SyncPlan } from './types';
 
 class AppState {
   info = $state<AppInfo | null>(null);
@@ -42,6 +43,15 @@ class AppState {
   hookStep = $state('');
   hookError = $state('');
 
+  /** What each server requires of mods, compared with the mod cache (by profile id); `GET /server` is asked quietly. */
+  modPlans = $state<Record<string, SyncPlan>>({});
+  /** The Ask-mode dialog: the plan it lists, a running download, the last error. */
+  modDialog = $state<{ plan: SyncPlan; busy: boolean; error: string } | null>(null);
+  /** Progress of the mod package being downloaded. */
+  modProgress = $state<{ id: string; version: string; done: number; total: number } | null>(null);
+  private modChecking = new Set<string>();
+  private modDialogDone: ((ok: boolean) => void) | null = null;
+
   selected = $derived(this.profiles.find((p) => p.id === this.settings?.selected_profile) ?? this.profiles[0] ?? null);
   /** The selected game version (`official` for the official mode). */
   version = $derived(this.info?.client_version ?? '');
@@ -67,6 +77,13 @@ class AppState {
         this.hookRate.feed(p.done, p.total);
       },
       onStep: (s) => (this.hookStep = s),
+    });
+    await listenMods({
+      onProgress: (p) => (this.modProgress = p),
+      onSynced: (e) => {
+        const name = this.profiles.find((p) => p.id === e.profile)?.name ?? 'the server';
+        toasts.show('ok', `Mods for ${name}: ${e.mods.join(', ')} downloaded and verified`);
+      },
     });
     await Promise.all([this.refreshProfiles(), this.refreshSettings(), this.refreshStatus(), this.refreshHook()]);
     this.info = (await run(() => ipc.appInfo())) ?? null;
@@ -142,6 +159,71 @@ class AppState {
   async checkServers(): Promise<void> {
     const ids = this.profiles.filter((p) => !isPlainHttpBlocked(p)).map((p) => p.id);
     await Promise.allSettled(ids.map((id) => this.checkServer(id)));
+    if (this.selected && ids.includes(this.selected.id)) void this.checkMods(this.selected.id);
+  }
+
+  /**
+   * Compares what a server requires with the mod cache (the backend also downloads in Auto mode).
+   * Quiet: an unreachable server keeps the old plan; nothing happens for the official mode.
+   */
+  async checkMods(id: string): Promise<SyncPlan | null> {
+    if (this.official || this.modChecking.has(id)) return this.modPlans[id] ?? null;
+    this.modChecking.add(id);
+    try {
+      const plan = await ipc.modSyncCheck(id);
+      this.modPlans[id] = plan;
+      if (plan.applied.length) {
+        toasts.show('ok', `Mods for ${plan.profile_name}: ${plan.applied.join(', ')} downloaded and verified`);
+      }
+      return plan;
+    } catch {
+      return this.modPlans[id] ?? null;
+    } finally {
+      this.modChecking.delete(id);
+    }
+  }
+
+  /** Asks the player (Ask mode) to download the required mods; resolves true once they are in the cache. */
+  openModDialog(plan: SyncPlan): Promise<boolean> {
+    this.modDialogDone?.(false);
+    this.modDialog = { plan, busy: false, error: '' };
+    return new Promise((resolve) => (this.modDialogDone = resolve));
+  }
+
+  closeModDialog(ok: boolean): void {
+    this.modDialog = null;
+    this.modProgress = null;
+    const done = this.modDialogDone;
+    this.modDialogDone = null;
+    done?.(ok);
+  }
+
+  /** The dialog's Download button: fetches and verifies; on a failure the dialog stays and says why. */
+  async downloadMods(): Promise<void> {
+    const d = this.modDialog;
+    if (!d || d.busy) return;
+    d.busy = true;
+    d.error = '';
+    try {
+      const plan = await ipc.modSyncApply(d.plan.profile_id);
+      this.modPlans[plan.profile_id] = plan;
+      if (plan.errors.length) {
+        d.plan = plan;
+        d.error = plan.errors.join('\n');
+        d.busy = false;
+        return;
+      }
+      if (plan.status === 'ok' || plan.status === 'auto') {
+        toasts.show('ok', `Downloaded and verified: ${plan.applied.join(', ') || 'nothing new'}`);
+        this.closeModDialog(true);
+        return;
+      }
+      d.plan = plan;
+      d.error = plan.blocker ?? 'The mods are still not ready';
+    } catch (e) {
+      d.error = errorText(e);
+    }
+    d.busy = false;
   }
 
   /** Re-reads each logged-in account's role (`GET /me`). Quiet: an unreachable server just keeps the old role. */
@@ -230,7 +312,10 @@ class AppState {
   async select(id: string): Promise<void> {
     if (!this.settings) return;
     const s = await run(() => ipc.setSettings({ ...this.settings!, selected_profile: id }));
-    if (s) this.settings = s;
+    if (s) {
+      this.settings = s;
+      void this.checkMods(id);
+    }
   }
 
   /** Saves a change to the settings (whole object, as the backend takes it) and applies the visible parts. */
@@ -286,7 +371,17 @@ class AppState {
       return;
     }
     if (!this.selected) return;
-    await run(() => ipc.play(this.selected!.id));
+    const id = this.selected.id;
+    // The server's mods first: Ask shows its dialog, Auto already downloaded them, Off refuses.
+    let plan = await this.checkMods(id);
+    if (needsDialog(plan) && !(await this.openModDialog(plan!))) return;
+    plan = this.modPlans[id];
+    const why = syncBlocker(plan);
+    if (why) {
+      toasts.show('error', why);
+      return;
+    }
+    await run(() => ipc.play(id));
   }
 
   /** Why Play is not possible right now, or null. */
@@ -298,7 +393,7 @@ class AppState {
     if (!this.selected) return 'Add a server first (Servers)';
     if (isPlainHttpBlocked(this.selected)) return 'Allow plain http for this server first (Servers)';
     if (!this.selected.logged_in) return 'Log in to the server first (Servers)';
-    return compatBlocker(this.compat);
+    return compatBlocker(this.compat) ?? syncBlocker(this.modPlans[this.selected.id]);
   }
 }
 

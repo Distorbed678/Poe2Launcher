@@ -4,11 +4,12 @@
  * screenshotted. Only loaded in development builds; `?versions=2` pretends the project supports a
  * second game version, `?official` starts in the official mode, `?empty` has no servers.
  * More switches: `?installing` (a running download with speed), `?paused`, `?lowspace`, `?offline`
- * (no news, no server list), `?nonews`, `?motd`, `?nolist`, `?nobackups`, `?nologs`, `?skipped`.
+ * (no news, no server list), `?nonews`, `?motd`, `?nolist`, `?nobackups`, `?nologs`, `?skipped`;
+ * mods: `?mods` (a cache with mods), `?modsync[=off|auto]` (server p1 requires two mods; Ask dialog at Play), `?offline` also affects the mod index.
  */
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
-import type { AppInfo, BackupInfo, GameVersion, InstallStatus, ListedServer, LogFile, NewsItem, ProbeResult, ProfileView, ServerInfo, Settings } from './types';
+import type { ModEntry, ModIndex, ModManifest, ModsView, SyncMod, SyncPlan, AppInfo, BackupInfo, GameVersion, InstallStatus, ListedServer, LogFile, NewsItem, ProbeResult, ProfileView, ServerInfo, Settings } from './types';
 
 export function installMock(params: URLSearchParams): void {
   mockWindows('main');
@@ -28,6 +29,7 @@ export function installMock(params: URLSearchParams): void {
     remember_steam_login: true,
     prefer_code_entry: true,
     theme: params.get('theme') === 'light' ? 'light' : 'dark',
+    mod_sync: params.get('modsync') === 'off' || params.get('modsync') === 'auto' ? (params.get('modsync') as 'off' | 'auto') : 'ask',
   };
   let remembered = true;
   const installed = new Set<string>(params.has('fresh') ? [] : (params.get('installed') ?? '0.5.5e').split(','));
@@ -47,6 +49,7 @@ export function installMock(params: URLSearchParams): void {
     motd: id === 'p1' && params.has('motd')
       ? 'Welcome to the **test realm**!\n\n- Maintenance on Saturday 18:00 UTC\n- New: the hideout is open, see [the changelog](https://example.org/changes)\n\n<script>alert(1)</script> stays text.'
       : null,
+    mods: id === 'p1' && params.has('modsync') ? { mods: advertised(), skipped: [] } : { mods: [], skipped: [] },
   });
   const pingOf = (id: string) => (id === 'p1' ? 4 : id === 'p2' ? 12 : 88);
   const versions = (): GameVersion[] => {
@@ -135,6 +138,66 @@ export function installMock(params: URLSearchParams): void {
     }, 900);
   }
 
+
+  // --- mods: a cache, pins per scope, an advertisement for p1 (`?modsync`), the index (`?mods`) ---
+  const cache: ModEntry[] = [];
+  const pins: Record<string, { id: string; version: string }[]> = {};
+  let syncDone = params.get('modsync') === 'auto';
+  const manifestOf = (id: string, version: string, side: 'client' | 'both', code: boolean): ModManifest => ({
+    id, name: id.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' '), version, description: `The ${id} mod`, authors: ['Ann'], license: 'MIT', homepage: '', side,
+    game_versions: ['0.5.5e'], hook_api: code ? 1 : null, server_api: side === 'both' ? 1 : null, after: [], before: [], conflicts: [], dependencies: {}, entry_dll: code ? `${id}.dll` : null, has_code: code,
+  });
+  function entry(id: string, version: string, o: Partial<ModEntry> = {}): ModEntry {
+    const side = o.side === 'both' ? 'both' : 'client';
+    const code = o.has_code ?? true;
+    return { id, version, side, manifest: manifestOf(id, version, side, code), errors: [], unknown_keys: [], compat: { kind: 'ok' }, compat_text: 'compatible', sha256: 'a'.repeat(64), size: 48_210, source: 'zip', added: now, has_code: code, server_half_left_out: side === 'both', enabled: false, enabled_all: false, required: false, in_effect: false, origin: null, order: null, ...o };
+  }
+  if (params.has('mods') || params.has('modsync')) {
+    cache.push(entry('hud-tweaks', '1.2.0', { source: 'index' }), entry('hud-tweaks', '1.1.0', { source: 'index' }), entry('old-ui', '0.3.0', { compat: { kind: 'wrong_game', supported: ['0.4.0'] }, compat_text: 'made for 0.4.0' }), entry('loot-filter', '2.0.0', { has_code: false, source: 'folder' }));
+    pins.all = [{ id: 'loot-filter', version: '2.0.0' }];
+    pins.p1 = [{ id: 'hud-tweaks', version: '1.2.0' }];
+  }
+  const advertised = () => [
+    { id: 'faster-rolls', version: '1.0.0', side: 'both', sha256: 'c'.repeat(64), size: 48_210, required: true, hook_api: 1, game_versions: ['0.5.5e'], sources: [{ type: 'server', path: '/api/v1/mods/faster-rolls/1.0.0.zip' }], name: 'Faster rolls', authors: ['Ann'], description: 'Rolls resolve 1.5x faster on this realm.' },
+    { id: 'realm-skin', version: '0.4.1', side: 'client', sha256: 'd'.repeat(64), size: 1_240_000, required: true, game_versions: ['0.5.5e'], name: 'Realm skin', authors: ['Bo'], description: 'Replaces the login background.' },
+  ];
+  function syncPlan(profileId: string): SyncPlan {
+    const p = profiles.find((x) => x.id === profileId);
+    const mods: SyncMod[] = profileId === 'p1' && params.has('modsync')
+      ? advertised().map((m) => ({ id: m.id, version: m.version, name: m.name, side: m.side as 'client' | 'both', size: m.size, sha256: m.sha256, required: true, code: m.hook_api === 1, authors: m.authors, description: m.description, state: syncDone ? 'ready' : 'missing', detail: syncDone ? 'downloaded and verified' : 'not downloaded yet' }))
+      : [];
+    const missing = mods.some((m) => m.state === 'missing');
+    const mode = settings.mod_sync;
+    const status = !missing ? 'ok' : mode === 'off' ? 'off' : mode === 'auto' ? 'auto' : 'ask';
+    return { profile_id: profileId, profile_name: p?.name ?? '', mode, status, mods, blocker: status === 'off' ? `${p?.name} requires mods you do not have: Faster rolls 1.0.0, Realm skin 0.4.1. Mod sync is Off, so nothing is downloaded` : null, download_bytes: missing ? mods.reduce((n, m) => n + m.size, 0) : 0, skipped: [], stale: false, applied: [], errors: [] };
+  }
+  function modsView(scope: string): ModsView {
+    const sp = pins[scope] ?? [];
+    const req = scope === 'p1' ? syncPlan('p1').mods : [];
+    const entries = cache.map((e, i) => {
+      const enabled = sp.some((x) => x.id === e.id && x.version === e.version);
+      const enabledAll = (pins.all ?? []).some((x) => x.id === e.id && x.version === e.version);
+      const inEffect = (enabled || enabledAll) && e.compat?.kind === 'ok';
+      return { ...e, enabled, enabled_all: enabledAll, in_effect: inEffect, origin: inEffect ? (enabled ? 'profile' : 'global') : null, order: inEffect ? i : null } as ModEntry;
+    });
+    if (scope === 'p1' && syncDone) {
+      for (const [i, m] of req.entries()) entries.unshift(entry(m.id, m.version, { side: m.side as 'both' | 'client', has_code: m.code, source: 'server', required: true, in_effect: true, origin: 'required', order: i, enabled: false }));
+    }
+    return { entries, scope, scope_name: scope === 'all' ? 'All servers' : (profiles.find((p) => p.id === scope)?.name ?? ''), required: req, dropped: [], problems: [], cache_dir: '/home/user/.local/share/poe2-launcher/mods/cache', cache_bytes: cache.reduce((n, m) => n + m.size, 0), game_version: current().version, hook_abi: 1, mod_sync: settings.mod_sync };
+  }
+  function modIndex(): ModIndex {
+    const v = (version: string, o: object = {}) => ({ version, released: '2026-10-2' + version.length, game_versions: ['0.5.5e'], hook_api: 1, server_api: null, sha256: 'b'.repeat(64), size: 52_000, url: 'https://github.com/example/m/releases/download/x.zip', yanked: false, compat: { kind: 'ok' as const }, cached: false, ...o });
+    const m = (id: string, name: string, side: 'client' | 'both' | 'server', description: string, tags: string[], versions: ReturnType<typeof v>[]) => ({ id, name, description, author: 'Ann', side, homepage: 'https://example.org/' + id, licence: 'MIT', tags, versions });
+    if (params.has('offline')) return { mods: [m('hud-tweaks', 'HUD tweaks', 'client', 'Moves and resizes parts of the HUD.', ['ui'], [v('1.2.0', { cached: true })])], skipped: [], updated: '', fetched_at: now - 86_400, offline: true, error: 'cannot reach the mod index: connection refused or host not found' };
+    return { mods: [
+      m('faster-rolls', 'Faster rolls', 'both', 'Rolls resolve 1.5x faster. Needs the server half on the realm.', ['gameplay', 'qol'], [v('1.0.0', { server_api: 1 })]),
+      m('hud-tweaks', 'HUD tweaks', 'client', 'Moves and resizes parts of the HUD, with a layout editor.', ['ui'], [v('1.2.0', { cached: true }), v('1.1.0', { cached: true }), v('1.0.0')]),
+      m('loot-filter', 'Loot filter', 'client', 'A data-only loot highlight list, no code.', ['qol', 'loot'], [v('2.0.0', { hook_api: null, cached: true })]),
+      m('old-ui', 'Old UI', 'client', 'Made for an older client build.', ['ui'], [v('0.3.0', { game_versions: ['0.4.0'], compat: { kind: 'wrong_game', supported: ['0.4.0'] } })]),
+      m('admin-tools', 'Admin tools', 'server', 'Server commands for moderators (a server mod).', ['admin'], [v('0.9.0', { hook_api: null, server_api: 1 })]),
+    ], skipped: params.has('skipped') ? ['entry 5: id must match [a-z0-9][a-z0-9_-]{1,63}'] : [], updated: '2026-10-22T00:00:00Z', fetched_at: now - 300, offline: false, error: '' };
+  }
+
   const info = (): AppInfo => ({
     launcher_version: '0.2.0', client_version: current().version, game_versions: versions(), os: 'linux',
     data_dir: '/home/user/.local/share/poe2-launcher', config_dir: '/home/user/.config/poe2-launcher',
@@ -175,14 +238,24 @@ export function installMock(params: URLSearchParams): void {
         case 'backup_delete': backups = backups.filter((b) => b.name !== a.name); return null;
         case 'backup_set_settings': backupSettings = { auto: a.auto as boolean, keep: a.keep as number }; return backupSettings;
         case 'account_refresh': return profiles.find((p) => p.id === a.id);
-        case 'mods_list':
-          return params.has('mods')
-            ? [
-                { id: 'core-lib', dir_name: 'core-lib', manifest: { id: 'core-lib', name: 'Core library', version: '1.2.0', description: 'Shared helpers', authors: [], license: 'MIT', homepage: '', game_versions: ['0.5.5e'], hook_api: 1, after: [], before: [], conflicts: [], dependencies: {}, entry_dll: null }, errors: [], unknown_keys: [], compat: { kind: 'ok' }, enabled: true, order: 0 },
-                { id: 'old-mod', dir_name: 'old-mod', manifest: { id: 'old-mod', name: 'Old mod', version: '0.1.0', description: 'Made for another build', authors: [], license: 'MIT', homepage: '', game_versions: ['0.4.0'], hook_api: 1, after: [], before: [], conflicts: [], dependencies: { 'core-lib': '^1' }, entry_dll: null }, errors: [], unknown_keys: [], compat: { kind: 'wrong_game', supported: ['0.4.0'] }, enabled: false, order: null },
-              ]
-            : [];
-        case 'mods_dir': return '/home/user/.local/share/poe2-launcher/game/0.5.5e/poe-hook-mods';
+        case 'mods_list': return modsView(a.scope as string);
+        case 'mod_install': { cache.push(entry('local-mod', '0.1.0', { source: 'zip' })); return { id: 'local-mod', version: '0.1.0', side: 'client', sha256: 'f'.repeat(64), size: 2048, already_cached: false, has_code: true, server_half_left_out: false, unknown_keys: [], warnings: ['no .sha256 file next to the package: its identity is not pinned'] }; }
+        case 'mod_set_enabled': {
+          const scope = a.scope as string;
+          const list = (pins[scope] ??= []).filter((x) => x.id !== a.id);
+          if (a.enabled) list.push({ id: a.id as string, version: a.version as string });
+          pins[scope] = list;
+          return [];
+        }
+        case 'mod_move': case 'mod_auto_order': return [];
+        case 'mod_remove': { const i = cache.findIndex((m) => m.id === a.id && m.version === a.version); if (i >= 0) cache.splice(i, 1); return null; }
+        case 'mods_dir': return '/home/user/.local/share/poe2-launcher/mods/cache';
+        case 'mod_cache_status': return { dir: '/home/user/.local/share/poe2-launcher/mods/cache', entries: cache.length, bytes: cache.reduce((n, m) => n + m.size, 0), unused_entries: 1, unused_bytes: 48_210 };
+        case 'mod_cache_prune': return { removed: 1, bytes: 48_210 };
+        case 'mod_sync_check': return syncPlan(a.profileId as string);
+        case 'mod_sync_apply': { syncDone = true; const pl = syncPlan(a.profileId as string); pl.applied = ['Faster rolls 1.0.0']; return pl; }
+        case 'mod_index_get': return modIndex();
+        case 'mod_index_install': { cache.push(entry(a.id as string, a.version as string, { source: 'index' })); return { id: a.id, version: a.version, side: 'client', sha256: 'e'.repeat(64), size: 9000, already_cached: false, has_code: true, server_half_left_out: false, unknown_keys: [], warnings: [] }; }
         case 'steam_login_status': return { remembered, account: remembered ? settings.steam_username : null, files: [] };
         case 'steam_logout': remembered = false; settings = { ...settings, steam_username: '', remember_steam_login: false }; return { remembered, account: null, files: [] };
         case 'desktop_entry_status': return { supported: true, installed: false, exec: null, stale: false, file: '/home/user/.local/share/applications/org.poe2modding.launcher.desktop', current_exec: '/home/user/Apps/Poe2-Launcher.AppImage', appimage: true };

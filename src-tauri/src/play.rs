@@ -221,6 +221,7 @@ mod tests {
             gateway_region: Some("Local".into()),
             uptime_secs: 1,
             motd: None,
+            mods: Default::default(),
         }
     }
 

@@ -17,7 +17,6 @@ use crate::{
     depot::{self, DepotEvent, DownloadJob, Outcome, Secret, ToolPin},
     host_run::HostRuntime,
     keystore::{StoredSession, TokenStore},
-    mods::{InstalledMod, InstalledNew, ModStore},
     paths::{Dirs, reject_steam_paths},
     play::{self, PlayConfig},
     profiles::{PlainHttp, Profile, ProfileStore, needs_plain_http_confirmation, plain_http},
@@ -308,7 +307,7 @@ impl Core {
 
     // --- profiles and accounts ----------------------------------------------------------
 
-    fn profile_store(&self) -> ProfileStore {
+    pub(crate) fn profile_store(&self) -> ProfileStore {
         ProfileStore::new(self.dirs.profiles_file())
     }
 
@@ -811,54 +810,6 @@ impl Core {
         Ok(())
     }
 
-    // --- mods --------------------------------------------------------------------------
-
-    fn mod_store(&self) -> Result<ModStore> {
-        let version = self.version();
-        if version.is_official() {
-            bail!("the hook's mod loader loads no mods in official (read-only) mode");
-        }
-        Ok(ModStore::new(&self.install_dir()?, &version.version))
-    }
-
-    pub fn mods_list(&self) -> Result<Vec<InstalledMod>> {
-        self.mod_store()?.list()
-    }
-
-    pub fn mod_install(&self, path: &str, replace: bool) -> Result<InstalledNew> {
-        let p = PathBuf::from(path);
-        let store = self.mod_store()?;
-        if p.is_dir() {
-            store.install_dir(&p, replace)
-        } else {
-            store.install_zip(&p, replace)
-        }
-    }
-
-    pub fn mod_enable(&self, id: &str, override_compat: bool) -> Result<Vec<String>> {
-        self.mod_store()?.enable(id, override_compat)
-    }
-
-    pub fn mod_disable(&self, id: &str) -> Result<Vec<String>> {
-        self.mod_store()?.disable(id)
-    }
-
-    pub fn mod_move(&self, id: &str, position: usize) -> Result<Vec<String>> {
-        self.mod_store()?.move_to(id, position)
-    }
-
-    pub fn mod_auto_order(&self) -> Result<Vec<String>> {
-        self.mod_store()?.auto_order()
-    }
-
-    pub fn mod_remove(&self, id: &str) -> Result<()> {
-        self.mod_store()?.remove(id)
-    }
-
-    pub fn mods_dir(&self) -> Result<PathBuf> {
-        Ok(self.mod_store()?.dir().to_path_buf())
-    }
-
     // --- play --------------------------------------------------------------------------
 
     pub fn play_state(&self) -> PlayState {
@@ -990,6 +941,11 @@ impl Core {
         let host = play::client_host(&info, &profile.url);
         let options = play::deploy_options(&cfg, &info, &host)?;
         self.check_hook(&settings).await?;
+
+        // The server's required mods (downloaded and verified per the Mod sync setting) and the
+        // player's own for this server go into the game before the hook starts.
+        step("preparing the mods");
+        self.prepare_mods(&profile, &info, &settings).await?;
 
         step("preparing the Proton prefix");
         play::ensure_prefix(&cfg).await?;

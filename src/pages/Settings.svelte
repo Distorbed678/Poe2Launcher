@@ -12,7 +12,8 @@
   import Chip from '../lib/ui/Chip.svelte';
   import Switch from '../lib/ui/Switch.svelte';
   import Spinner from '../lib/ui/Spinner.svelte';
-  import type { DesktopEntry, Settings, SteamLogin } from '../lib/types';
+  import { formatBytes } from '../lib/format';
+  import type { CacheStatus, DesktopEntry, Settings, SteamLogin, SyncModeName } from '../lib/types';
 
   /** The settings as the backend stores them: empty install folders are dropped. */
   function clean(s: Settings): Settings {
@@ -25,6 +26,20 @@
   const linux = $derived(app.info?.os === 'linux');
   const ver = $derived(app.version);
   const verName = $derived(versionLabel(ver));
+
+  let cache = $state<CacheStatus | null>(null);
+  let cacheBusy = $state(false);
+  const syncModes: { id: SyncModeName; label: string; help: string }[] = [
+    { id: 'off', label: 'Off', help: 'Only show which mods a server requires. Play is blocked until you have them.' },
+    { id: 'ask', label: 'Ask', help: 'A dialog lists the required mods (name, version, side, size, code) with a Download button.' },
+    { id: 'auto', label: 'Auto', help: 'Download, verify and switch to the server\'s mods without asking - code mods included, also from a server you just added.' },
+  ];
+  async function clearCache() {
+    cacheBusy = true;
+    const r = await run(() => ipc.modCachePrune(), (p) => (p.removed ? `Removed ${p.removed} unused cached mods (${formatBytes(p.bytes)})` : 'Nothing unused to remove'));
+    cacheBusy = false;
+    if (r) cache = (await run(() => ipc.modCacheStatus())) ?? cache;
+  }
 
   let steam = $state<SteamLogin | null>(null);
   let steamBusy = $state(false);
@@ -41,6 +56,7 @@
 
   onMount(() => {
     void run(() => ipc.steamLogin()).then((s) => (steam = s ?? null));
+    void run(() => ipc.modCacheStatus()).then((c) => (cache = c ?? null));
     if (linux) void run(() => ipc.desktopEntry()).then((d) => (desktop = d ?? null));
   });
 
@@ -206,6 +222,30 @@
           </div>
         </div>
         <Switch bind:checked={draft.custom_frame}>Use the launcher's own window frame <small>Turn off for your system's title bar and borders.</small></Switch>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><span class="head-icon"><Icon name="mods" size={16} /></span><h2>Mods</h2></div>
+        <div class="field">
+          <span>Mod sync</span>
+          <div class="seg" style="margin-bottom: 0; align-self: flex-start" role="radiogroup" aria-label="Mod sync">
+            {#each syncModes as m (m.id)}
+              <button type="button" class:on={draft.mod_sync === m.id} role="radio" aria-checked={draft.mod_sync === m.id} onclick={() => draft && (draft.mod_sync = m.id)}>{m.label}</button>
+            {/each}
+          </div>
+          <span class="hint">{syncModes.find((m) => m.id === draft!.mod_sync)?.help} What a server requires is checked when you select it and again at Play. Every download is checked against the SHA-256 the server announced; a mismatch installs nothing.</span>
+        </div>
+        <hr class="sep" />
+        <dl class="kv">
+          <dt>Cache</dt><dd>{#if cache}{cache.entries} cached mod versions, {formatBytes(cache.bytes)}{:else}...{/if}</dd>
+          {#if cache}<dt>Folder</dt><dd><code>{cache.dir}</code></dd>{/if}
+        </dl>
+        <div class="actions" style="justify-content: flex-start">
+          <button type="button" class="btn" disabled={cacheBusy || !cache || cache.unused_entries === 0} onclick={clearCache}>
+            {#if cacheBusy}<Spinner size={14} />{:else}<Icon name="trash" size={14} />{/if} Clear unused cached mods{cache && cache.unused_entries ? ` (${cache.unused_entries}, ${formatBytes(cache.unused_bytes)})` : ''}
+          </button>
+        </div>
+        <p class="hint">Unused: not enabled for any server and not required by one. The server's own mods come back by themselves when needed.</p>
       </section>
 
       <section class="card">

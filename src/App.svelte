@@ -11,6 +11,7 @@
   import Chip from './lib/ui/Chip.svelte';
   import Toasts from './lib/ui/Toasts.svelte';
   import ConfirmDialog from './lib/ui/ConfirmDialog.svelte';
+  import ModSyncDialog from './lib/ui/ModSyncDialog.svelte';
   import Home from './pages/Home.svelte';
   import Servers from './pages/Servers.svelte';
   import Library from './pages/Library.svelte';
@@ -185,3 +186,4 @@
 </div>
 <Toasts />
 <ConfirmDialog />
+<ModSyncDialog />

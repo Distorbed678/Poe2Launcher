@@ -34,6 +34,8 @@ sha2 = "0.10"
 hex = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 semver = "1"
+# Scratch folders for downloads and unpacking.
+tempfile = "3"
 dirs = "6"
 fs4 = "0.13"
 zeroize = "1"
@@ -41,6 +43,9 @@ zeroize = "1"
 # (client-hook/, which nests Poe2Protocol) so that a recursive clone builds without git auth
 # gymnastics in cargo.
 poe-hook-deploy = { path = "../client-hook/poe-hook-deploy" }
+# The shared mod manifest (v1 and v2, sides) and package verification, the same crate the hook's
+# loader, the server and the SDK use.
+poe-hook-mods = { path = "../client-hook/poe-hook-mods" }
 # "Host a server": the package is a .tar.gz (Linux) or .zip (Windows); the server config is
 # patched in place (comments kept); a polite SIGTERM stops the server on Unix.
 toml_edit = "0.25"
@@ -67,7 +72,6 @@ libc = "0.2"
 glib = "0.18"
 
 [dev-dependencies]
-tempfile = "3"
 axum = "0.8"
 
 [profile.release]

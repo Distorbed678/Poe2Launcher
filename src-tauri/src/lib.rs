@@ -15,7 +15,12 @@ pub mod host_ops;
 pub mod host_run;
 pub mod keystore;
 pub mod logs;
+pub mod mod_ops;
+pub mod modcache;
+pub mod modindex;
 pub mod mods;
+pub mod modsets;
+pub mod modsync;
 pub mod news;
 pub mod paths;
 pub mod play;
@@ -204,12 +209,17 @@ pub fn run() {
             commands::install_verify,
             commands::mods_list,
             commands::mod_install,
-            commands::mod_enable,
-            commands::mod_disable,
+            commands::mod_set_enabled,
             commands::mod_move,
             commands::mod_auto_order,
             commands::mod_remove,
             commands::mods_dir,
+            commands::mod_cache_status,
+            commands::mod_cache_prune,
+            commands::mod_sync_check,
+            commands::mod_sync_apply,
+            commands::mod_index_get,
+            commands::mod_index_install,
             commands::play,
             commands::play_state,
             commands::app_info,

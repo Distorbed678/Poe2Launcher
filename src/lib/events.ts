@@ -68,3 +68,15 @@ export async function listenHook(h: { onProgress: Handler<HostProgress>; onStep:
   ]);
   return () => subs.forEach((u) => u());
 }
+
+/** Mod downloads: progress of the package being fetched, and mods the launcher synced by itself (Auto, or at Play). */
+export async function listenMods(h: {
+  onProgress: Handler<{ id: string; version: string; done: number; total: number }>;
+  onSynced: Handler<{ profile: string; mods: string[] }>;
+}): Promise<UnlistenFn> {
+  const subs = await Promise.all([
+    listen<{ id: string; version: string; done: number; total: number }>('mods:progress', (e) => h.onProgress(e.payload)),
+    listen<{ profile: string; mods: string[] }>('mods:synced', (e) => h.onSynced(e.payload)),
+  ]);
+  return () => subs.forEach((u) => u());
+}

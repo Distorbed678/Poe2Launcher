@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  AccountInfo, AppInfo, BackupInfo, BackupSettings, BackupStatus, DesktopEntry, LogContent, LogKind, LogList, NewsFeed, ProbeResult, ServerList, ServerStatus, SpaceCheck, GameVersion, HookCheck, HookOutcome, HookStatus, HostSettings, HostStatus, InstallOutcome, InstallRequest, InstallStatus, InstalledMod,
-  InstalledNew, LogoutResult, PlayState, ProfileView, ServerInfo, ServerRelease, Settings, SetupRequest,
+  AccountInfo, AppInfo, BackupInfo, BackupSettings, BackupStatus, DesktopEntry, LogContent, LogKind, LogList, NewsFeed, ProbeResult, ServerList, ServerStatus, SpaceCheck, GameVersion, HookCheck, HookOutcome, HookStatus, HostSettings, HostStatus, InstallOutcome, InstallRequest, InstallStatus,
+  AddedMod, CacheStatus, ModIndex, ModsView, Pruned, SyncPlan, LogoutResult, PlayState, ProfileView, ServerInfo, ServerRelease, Settings, SetupRequest,
   SetupResult, SteamLogin, VerifyReport,
 } from './types';
 
@@ -78,14 +78,28 @@ export const ipc = {
   installResume: (steamPassword: string) => call<void>('install_resume', { steamPassword }),
   installSpace: () => call<SpaceCheck>('install_space'),
   installVerify: () => call<VerifyReport>('install_verify'),
-  mods: () => call<InstalledMod[]>('mods_list'),
-  modInstall: (path: string, replace: boolean) => call<InstalledNew>('mod_install', { path, replace }),
-  modEnable: (id: string, overrideCompat: boolean) => call<string[]>('mod_enable', { id, overrideCompat }),
-  modDisable: (id: string) => call<string[]>('mod_disable', { id }),
-  modMove: (id: string, position: number) => call<string[]>('mod_move', { id, position }),
-  modAutoOrder: () => call<string[]>('mod_auto_order'),
-  modRemove: (id: string) => call<void>('mod_remove', { id }),
+  /** The mod cache with its state in `scope` (`all` or a server profile id). */
+  mods: (scope: string) => call<ModsView>('mods_list', { scope }),
+  /** Adds a local package zip or mod folder to the cache; with `scope`, enables it there. */
+  modInstall: (path: string, scope: string | null, replace: boolean) => call<AddedMod>('mod_install', { path, scope, replace }),
+  /** Enables (one version per mod) or disables a cached mod in a scope; the answer lists own mods the set leaves out. */
+  modSetEnabled: (scope: string, id: string, version: string, enabled: boolean, force = false) =>
+    call<string[]>('mod_set_enabled', { scope, id, version, enabled, force }),
+  modMove: (scope: string, id: string, position: number) => call<string[]>('mod_move', { scope, id, position }),
+  modAutoOrder: (scope: string) => call<string[]>('mod_auto_order', { scope }),
+  /** Deletes a cached version and takes it out of every mod set. */
+  modRemove: (id: string, version: string) => call<void>('mod_remove', { id, version }),
   modsDir: () => call<string>('mods_dir'),
+  modCacheStatus: () => call<CacheStatus>('mod_cache_status'),
+  /** "Clear unused cached mods". */
+  modCachePrune: () => call<Pruned>('mod_cache_prune'),
+  /** Asks the server what it requires and compares it with the cache (the Auto mode also downloads). */
+  modSyncCheck: (profileId: string) => call<SyncPlan>('mod_sync_check', { profileId }),
+  /** The Download button: fetches the required mods (or just `ids`), verified; nothing is kept on a mismatch. */
+  modSyncApply: (profileId: string, ids: string[] | null = null) => call<SyncPlan>('mod_sync_apply', { profileId, ids }),
+  /** The mod browser's index (cached; offline gives the saved copy). */
+  modIndexGet: (force = false) => call<ModIndex>('mod_index_get', { force }),
+  modIndexInstall: (id: string, version: string, scope: string | null) => call<AddedMod>('mod_index_install', { id, version, scope }),
   /** Private versions: the server profile; the official mode takes none (the game's own Steam login). */
   play: (profileId: string | null) => call<void>('play', { profileId }),
   steamLogin: () => call<SteamLogin>('steam_login_status'),

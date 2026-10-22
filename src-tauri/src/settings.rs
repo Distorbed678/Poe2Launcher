@@ -50,6 +50,10 @@ pub struct Settings {
     pub prefer_code_entry: bool,
     /// `dark` (default) or `light`.
     pub theme: String,
+    /// What to do when a server requires mods that are not in the cache: `off` (show what is
+    /// missing and block Play), `ask` (default; a dialog with Download) or `auto` (download,
+    /// verify and switch without asking, code mods included).
+    pub mod_sync: String,
 }
 
 impl Default for Settings {
@@ -69,6 +73,7 @@ impl Default for Settings {
             remember_steam_login: false,
             prefer_code_entry: true,
             theme: "dark".into(),
+            mod_sync: "ask".into(),
         }
     }
 }
@@ -126,6 +131,9 @@ impl Settings {
                 "unsupported game version {v} (supported: official, {})",
                 crate::version::VersionFile::known_versions().join(", ")
             );
+        }
+        if crate::modsync::SyncMode::parse(&self.mod_sync).is_none() {
+            anyhow::bail!("mod sync must be off, ask or auto");
         }
         if !matches!(self.theme.as_str(), "dark" | "light") {
             anyhow::bail!("theme must be dark or light");

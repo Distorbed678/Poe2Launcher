@@ -118,7 +118,7 @@ async fn official_has_no_mods_and_no_hosting() {
     e.core.set_game_version("official").unwrap();
     assert!(
         e.core
-            .mods_list()
+            .mods_list("all")
             .unwrap_err()
             .to_string()
             .contains("official")
@@ -135,7 +135,7 @@ async fn official_has_no_mods_and_no_hosting() {
     e.core
         .set_game_version(VersionFile::known_versions()[0])
         .unwrap();
-    assert!(e.core.mods_list().is_ok());
+    assert!(e.core.mods_list("all").is_ok());
 }
 
 #[tokio::test]

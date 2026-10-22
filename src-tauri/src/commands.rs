@@ -20,7 +20,10 @@ use crate::{
     host::{HostSettings, ServerRelease},
     host_ops::{HostStatus, InstallOutcome, SetupRequest, SetupResult},
     logs::{LogContent, LogList},
-    mods::{InstalledMod, InstalledNew},
+    mod_ops::{CacheStatus, ModsView, Pruned},
+    modcache::Added,
+    modindex::ModIndexView,
+    modsync::SyncPlan,
     news::NewsFeed,
     serverlist::{ProbeResult, ServerList},
     settings::Settings,
@@ -213,43 +216,97 @@ pub async fn install_verify(app: App<'_>) -> Res<VerifyReport> {
 }
 
 #[tauri::command]
-pub fn mods_list(app: App<'_>) -> Res<Vec<InstalledMod>> {
-    app.mods_list().map_err(err)
+pub fn mods_list(app: App<'_>, scope: Option<String>) -> Res<ModsView> {
+    app.mods_list(scope.as_deref().unwrap_or("all"))
+        .map_err(err)
+}
+
+/// Adds a local mod (a package zip or a mod folder) to the cache; with `scope`, enables it there.
+#[tauri::command]
+pub fn mod_install(app: App<'_>, path: String, scope: Option<String>, replace: bool) -> Res<Added> {
+    app.mod_install(&path, scope.as_deref(), replace)
+        .map_err(err)
 }
 
 #[tauri::command]
-pub fn mod_install(app: App<'_>, path: String, replace: bool) -> Res<InstalledNew> {
-    app.mod_install(&path, replace).map_err(err)
+pub fn mod_set_enabled(
+    app: App<'_>,
+    scope: String,
+    id: String,
+    version: String,
+    enabled: bool,
+    force: bool,
+) -> Res<Vec<String>> {
+    app.mod_set_enabled(&scope, &id, &version, enabled, force)
+        .map_err(err)
 }
 
 #[tauri::command]
-pub fn mod_enable(app: App<'_>, id: String, override_compat: bool) -> Res<Vec<String>> {
-    app.mod_enable(&id, override_compat).map_err(err)
+pub fn mod_move(app: App<'_>, scope: String, id: String, position: usize) -> Res<Vec<String>> {
+    app.mod_move(&scope, &id, position).map_err(err)
 }
 
 #[tauri::command]
-pub fn mod_disable(app: App<'_>, id: String) -> Res<Vec<String>> {
-    app.mod_disable(&id).map_err(err)
+pub fn mod_auto_order(app: App<'_>, scope: String) -> Res<Vec<String>> {
+    app.mod_auto_order(&scope).map_err(err)
 }
 
 #[tauri::command]
-pub fn mod_move(app: App<'_>, id: String, position: usize) -> Res<Vec<String>> {
-    app.mod_move(&id, position).map_err(err)
-}
-
-#[tauri::command]
-pub fn mod_auto_order(app: App<'_>) -> Res<Vec<String>> {
-    app.mod_auto_order().map_err(err)
-}
-
-#[tauri::command]
-pub fn mod_remove(app: App<'_>, id: String) -> Res<()> {
-    app.mod_remove(&id).map_err(err)
+pub fn mod_remove(app: App<'_>, id: String, version: String) -> Res<()> {
+    app.mod_remove(&id, &version).map_err(err)
 }
 
 #[tauri::command]
 pub fn mods_dir(app: App<'_>) -> Res<String> {
     app.mods_dir().map(|p| p.display().to_string()).map_err(err)
+}
+
+#[tauri::command]
+pub fn mod_cache_status(app: App<'_>) -> Res<CacheStatus> {
+    app.mod_cache_status().map_err(err)
+}
+
+#[tauri::command]
+pub fn mod_cache_prune(app: App<'_>) -> Res<Pruned> {
+    app.mod_cache_prune().map_err(err)
+}
+
+/// Asks the server what it requires and compares it with the cache (Auto mode also downloads).
+#[tauri::command]
+pub async fn mod_sync_check(app: App<'_>, profile_id: String) -> Res<SyncPlan> {
+    app.inner().mod_sync_check(&profile_id).await.map_err(err)
+}
+
+/// The Download button of the sync dialog.
+#[tauri::command]
+pub async fn mod_sync_apply(
+    app: App<'_>,
+    profile_id: String,
+    ids: Option<Vec<String>>,
+) -> Res<SyncPlan> {
+    app.inner()
+        .mod_sync_apply(&profile_id, ids)
+        .await
+        .map_err(err)
+}
+
+/// The mod browser's index (cached; never fails: offline gives the saved copy).
+#[tauri::command]
+pub async fn mod_index_get(app: App<'_>, force: bool) -> Res<ModIndexView> {
+    Ok(app.inner().mod_index_get(force).await)
+}
+
+#[tauri::command]
+pub async fn mod_index_install(
+    app: App<'_>,
+    id: String,
+    version: String,
+    scope: Option<String>,
+) -> Res<Added> {
+    app.inner()
+        .mod_index_install(&id, &version, scope.as_deref())
+        .await
+        .map_err(err)
 }
 
 /// Starts the game: for a private game version with the given server profile, for "Official

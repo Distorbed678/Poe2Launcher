@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::{keystore::TokenStore, paths::write_atomic};
+use crate::{keystore::TokenStore, mods::ModPin, paths::write_atomic};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Profile {
@@ -19,6 +19,10 @@ pub struct Profile {
     /// (non-loopback) address. Reset when the address changes.
     #[serde(default)]
     pub plain_http_ok: bool,
+    /// The mods the player enabled for this server (the server's required mods are added on
+    /// top at Play and are not stored here). Exact versions from the mod cache, in load order.
+    #[serde(default)]
+    pub mods: Vec<ModPin>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -82,6 +86,7 @@ impl ProfileStore {
             name,
             url,
             plain_http_ok: false,
+            mods: Vec::new(),
         };
         all.push(profile.clone());
         self.save(all)?;
@@ -108,6 +113,19 @@ impl ProfileStore {
             profile.plain_http_ok = false;
         }
         profile.url = url;
+        let out = profile.clone();
+        self.save(all)?;
+        Ok(out)
+    }
+
+    /// Replaces the mods enabled for this profile.
+    pub fn set_mods(&self, id: &str, mods: Vec<ModPin>) -> Result<Profile> {
+        let mut all = self.list()?;
+        let profile = all
+            .iter_mut()
+            .find(|p| p.id == id)
+            .with_context(|| format!("no server profile {id:?}"))?;
+        profile.mods = mods;
         let out = profile.clone();
         self.save(all)?;
         Ok(out)

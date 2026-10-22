@@ -31,6 +31,8 @@ export interface ServerInfo {
   uptime_secs: number;
   /** Message of the day: optional, only present when the server sends one. Plain text / markdown subset. */
   motd?: string | null;
+  /** The client mods the server requires or offers (servers without mod support send nothing). */
+  mods?: { mods: unknown[]; skipped: string[] };
 }
 
 /** `GET /server` with the round-trip time measured by the launcher. */
@@ -69,6 +71,8 @@ export interface Settings {
   remember_steam_login: boolean;
   prefer_code_entry: boolean;
   theme: 'dark' | 'light';
+  /** What to do when a server requires mods that are not downloaded: `off`, `ask` (default) or `auto`. */
+  mod_sync: SyncModeName;
 }
 
 export interface DepotView {
@@ -138,7 +142,12 @@ export type Compat =
   | { kind: 'ok' }
   | { kind: 'unspecified' }
   | { kind: 'wrong_game'; supported: string[] }
-  | { kind: 'hook_api_too_new'; needs: number; have: number };
+  | { kind: 'hook_api_too_new'; needs: number; have: number }
+  | { kind: 'hook_api_old'; needs: number; have: number }
+  | { kind: 'hook_api_missing'; have: number };
+
+/** Where a mod runs: `client` (the hook), `server`, or `both` (one package, two halves). */
+export type ModSide = 'client' | 'server' | 'both';
 
 export interface ModManifest {
   id: string;
@@ -148,30 +157,162 @@ export interface ModManifest {
   authors: string[];
   license: string;
   homepage: string;
+  side: ModSide;
   game_versions: string[];
   hook_api: number | null;
+  server_api: number | null;
   after: string[];
   before: string[];
   conflicts: string[];
   dependencies: Record<string, string>;
   entry_dll: string | null;
+  /** The client half runs native code inside the game process. */
+  has_code: boolean;
 }
 
-export interface InstalledMod {
+export type ModOrigin = 'required' | 'profile' | 'global' | 'dependency';
+
+/** One cached version of a mod, with its state in the scope being shown. */
+export interface ModEntry {
   id: string;
-  dir_name: string;
+  version: string;
+  side: ModSide;
   manifest: ModManifest | null;
   errors: string[];
   unknown_keys: string[];
   compat: Compat | null;
+  compat_text: string;
+  sha256: string;
+  size: number;
+  /** `server`, `index`, `zip`, `folder`. */
+  source: string;
+  added: number;
+  has_code: boolean;
+  server_half_left_out: boolean;
+  /** Enabled in the scope being shown. */
   enabled: boolean;
+  /** Enabled for all servers. */
+  enabled_all: boolean;
+  /** The scope's server requires exactly this version. */
+  required: boolean;
+  /** Part of what Play would load. */
+  in_effect: boolean;
+  origin: ModOrigin | null;
   order: number | null;
 }
 
-export interface InstalledNew {
+export type SyncState = 'ready' | 'missing' | 'changed' | 'incompatible' | 'no_source';
+
+export interface SyncMod {
   id: string;
-  compat: Compat;
+  version: string;
+  name: string;
+  side: ModSide;
+  size: number;
+  sha256: string;
+  required: boolean;
+  /** Native code that would run inside the game process. */
+  code: boolean;
+  authors: string[];
+  description: string;
+  state: SyncState;
+  detail: string;
+}
+
+export type SyncModeName = 'off' | 'ask' | 'auto';
+
+/** `ok`, `ask` (needs the player's go), `auto` (will download), `off` (blocked by the setting), `blocked`. */
+export type SyncStatus = 'ok' | 'ask' | 'auto' | 'off' | 'blocked';
+
+export interface SyncPlan {
+  profile_id: string;
+  profile_name: string;
+  mode: SyncModeName;
+  status: SyncStatus;
+  mods: SyncMod[];
+  blocker: string | null;
+  download_bytes: number;
+  skipped: string[];
+  stale: boolean;
+  applied: string[];
+  errors: string[];
+}
+
+export interface ModsView {
+  entries: ModEntry[];
+  scope: string;
+  scope_name: string;
+  required: SyncMod[];
+  dropped: string[];
+  problems: string[];
+  cache_dir: string;
+  cache_bytes: number;
+  game_version: string;
+  hook_abi: number;
+  mod_sync: SyncModeName;
+}
+
+export interface CacheStatus {
+  dir: string;
+  entries: number;
+  bytes: number;
+  unused_entries: number;
+  unused_bytes: number;
+}
+
+export interface Pruned {
+  removed: number;
+  bytes: number;
+}
+
+export interface AddedMod {
+  id: string;
+  version: string;
+  side: ModSide;
+  sha256: string;
+  size: number;
+  already_cached: boolean;
+  has_code: boolean;
+  server_half_left_out: boolean;
   unknown_keys: string[];
+  warnings: string[];
+}
+
+export interface IndexVersion {
+  version: string;
+  released: string;
+  game_versions: string[];
+  hook_api: number | null;
+  server_api: number | null;
+  sha256: string;
+  size: number;
+  url: string;
+  yanked: boolean;
+  compat: Compat;
+  /** Already in the mod cache with this hash. */
+  cached: boolean;
+}
+
+export interface IndexMod {
+  id: string;
+  name: string;
+  description: string;
+  author: string;
+  side: ModSide;
+  homepage: string;
+  licence: string;
+  tags: string[];
+  /** Newest first. */
+  versions: IndexVersion[];
+}
+
+export interface ModIndex {
+  mods: IndexMod[];
+  skipped: string[];
+  updated: string;
+  fetched_at: number;
+  offline: boolean;
+  error: string;
 }
 
 export type PlayState =

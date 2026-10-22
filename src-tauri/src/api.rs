@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::modsync::Advertisement;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
     /// No answer: wrong address, server down, TLS or timeout.
@@ -46,6 +48,10 @@ pub struct ServerInfo {
     /// text with line breaks, shown on Home. Capped when read.
     #[serde(default, deserialize_with = "motd_field")]
     pub motd: Option<String>,
+    /// The client mods the server requires or offers (optional; servers without mod support
+    /// send nothing). See [`crate::modsync`].
+    #[serde(default)]
+    pub mods: Advertisement,
 }
 
 /// Longest message of the day the launcher keeps (characters).
