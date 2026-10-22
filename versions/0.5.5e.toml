@@ -1,13 +1,17 @@
 # Supported game client 0.5.5e (Steam app "Path of Exile 2").
 #
-# THE one place that defines a supported client build. Read by `cargo xtask` (deploy paths,
-# dump folder, `check-build`), the servers (`[game] version` selects the file; opcode folder;
-# client check at login) and the launcher (a byte-identical copy in modules/launcher/versions/,
-# kept by `cargo xtask versions`; `cargo xtask check-build` and the xtask tests fail when the
-# copy is stale). Format and procedure for a new build: docs/guides/new-game-version.md.
+# THE one place that defines a supported client build. It lives in Poe2Protocol
+# (versions/<version>.toml, next to opcodes/<version>/). Read by the servers (Poe2Server:
+# `[game] version` selects the file; opcode folder; client check at login), by `cargo xtask` of
+# the hub (deploy paths, dump folder, `check-build`) and by the launcher (a byte-identical copy
+# in its versions/ folder, kept by `cargo xtask versions` in the hub; `cargo xtask check-build`
+# and the xtask tests fail when the copy is stale). Format and procedure for a new build:
+# docs/guides/new-game-version.md of Poe2ModdingProject.
 #
-# Paths are relative to the repository root. Sections a consumer does not know are ignored by
-# it (the launcher reads depots, [exe] and [verify]).
+# Paths below ([protocol] opcodes, [client_hook] signatures) are relative to the root of the
+# consumer's checkout (its working directory), which has this repository at modules/protocol
+# and Poe2ClientHook at modules/client-hook: Poe2Server and the hub both do. Sections a
+# consumer does not know are ignored by it (the launcher reads depots, [exe] and [verify]).
 version = "0.5.5e"
 # supported = tested end to end; experimental = signatures resolve, layouts unchecked;
 # legacy = kept for old captures only.
