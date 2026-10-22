@@ -668,6 +668,14 @@ mod tests {
             unreachable!()
         };
         assert_eq!(rt.pid(), Some(second));
+        // The new process's output is read asynchronously: Running can be announced before its
+        // first line reaches the tail.
+        for _ in 0..200 {
+            if rt.tail(50).iter().any(|l| l.contains("run 2")) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
         let tail = rt.tail(50).join("\n");
         assert!(tail.contains("run 1") && tail.contains("run 2"), "{tail}");
         assert!(tail.contains("the server asked for a restart"), "{tail}");

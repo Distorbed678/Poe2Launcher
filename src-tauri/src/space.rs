@@ -179,8 +179,9 @@ mod tests {
     fn free_space_is_read_from_the_nearest_existing_folder() {
         let tmp = tempfile::tempdir().unwrap();
         let deep = tmp.path().join("a/b/c");
-        assert!(free_space(&deep).is_some());
-        assert_eq!(free_space(&deep), free_space(tmp.path()));
+        let (a, b) = (free_space(&deep).unwrap(), free_space(tmp.path()).unwrap());
+        // Same filesystem; tests running in parallel write files between the two reads.
+        assert!(a.abs_diff(b) < 1 << 30, "{a} vs {b}");
     }
 
     #[test]
