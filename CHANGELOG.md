@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - **Mod system, launcher half.** Mods are classified `client` / `server` / `both` (badge on every mod); the launcher now parses `mod.toml` with the shared `poe-hook-mods` crate (manifest v1 and v2; its own parser is gone), refuses a server-only mod with a clear message and installs only the client half of a `both` package. Every package is checked with `verify_package` (SHA-256, name, paths, links, limits, CRCs) before it is kept; a failed check installs nothing. A DLL mod without `game.hook_api` is now refused (the loader refused it anyway).
 - **Mod cache and per-server mod sets.** `<data>/mods/cache/<id>/<version>/` keeps several verified versions; each server profile has its own set (the server's required mods always on, your own mods only where you enable them, or for all servers); at Play the set is copied into the game's `poe-hook-mods/` with `state.toml`. The official (read-only) entry never loads mods. **Breaking:** mods installed with older launchers in `<install>/poe-hook-mods/` are not read as the store any more (they are left alone and not enabled; add them again as a folder or package).
