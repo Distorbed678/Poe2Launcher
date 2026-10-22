@@ -414,6 +414,8 @@ export interface HostStatus {
 }
 
 export interface ServerRelease {
+  /** The GitHub repository the release is in (Poe2Server, or Poe2ModdingProject for the two oldest). */
+  repo: string;
   tag: string;
   version: string;
   game_version: string;
@@ -422,6 +424,30 @@ export interface ServerRelease {
   asset_url: string;
   size: number;
   sha256_url: string;
+  /** Release notes (a markdown subset, rendered as text). */
+  notes: string;
+  html_url: string | null;
+}
+
+/** `host_update_check`: never an error, a failed lookup is in `error`. */
+export interface ServerUpdateCheck {
+  installed: string | null;
+  release: ServerRelease | null;
+  update_available: boolean;
+  error: string | null;
+  /** Unix seconds. */
+  checked_at: number;
+}
+
+export interface UpdateOutcome {
+  updated: boolean;
+  from: string;
+  to: string;
+  package: PackageInfo;
+  was_running: boolean;
+  restarted: boolean;
+  backup: string | null;
+  sha256: string | null;
 }
 
 export interface InstallOutcome {
@@ -587,7 +613,7 @@ export interface LogContent {
 
 export interface BackupInfo {
   name: string;
-  kind: 'manual' | 'auto' | 'pre-restore' | 'other';
+  kind: 'manual' | 'auto' | 'pre-restore' | 'pre-update' | 'other';
   /** Unix seconds. */
   created: number;
   size: number;

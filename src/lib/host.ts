@@ -1,4 +1,4 @@
-import type { HostSettings, RunState } from './types';
+import type { HostSettings, RunState, ServerUpdateCheck } from './types';
 
 /** What the setup wizard edits (the admin password never leaves this object and the page). */
 export interface HostForm {
@@ -139,4 +139,32 @@ export function logLevel(line: string): 'error' | 'warn' | 'launcher' | 'plain' 
   if (/\bERROR\b/.test(line)) return 'error';
   if (/\bWARN\b/.test(line)) return 'warn';
   return 'plain';
+}
+
+/** How long a server update check is trusted before opening Host or Home asks again (seconds). */
+export const UPDATE_CHECK_TTL = 10 * 60;
+
+/** Whether a new check is due: never checked, another game version, or older than the TTL. */
+export function updateCheckDue(last: { at: number; game: string } | null, game: string, now: number, force = false): boolean {
+  if (force || !last || last.game !== game) return true;
+  return now - last.at >= UPDATE_CHECK_TTL;
+}
+
+/** "Server update available (v0.2.0)", or null when there is none. */
+export function updateHeadline(c: ServerUpdateCheck | null): string | null {
+  return c?.update_available && c.release ? `Server update available (v${c.release.version})` : null;
+}
+
+/** What the Update button will do, as a short sentence for the page. */
+export function updatePlan(running: boolean, hasDatabase = true): string {
+  const steps = [
+    running ? 'stops the server (players are disconnected)' : null,
+    hasDatabase ? 'backs up its database' : null,
+    'installs the new version',
+    'keeps your settings (new settings get their defaults)',
+    running ? 'starts the server again' : null,
+  ].filter((x): x is string => x !== null);
+  const last = steps.pop();
+  const list = steps.length ? `${steps.join(', ')} and ${last}` : last;
+  return `The update ${list}. If anything fails, the old version is put back.`;
 }

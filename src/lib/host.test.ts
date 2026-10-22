@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   formFromSettings, isUp, logLevel, playerAddress, portsToForward, pushLog, runLabel, settingsFromForm,
-  validateHostForm, validPublicHost, type HostForm,
+  validateHostForm, validPublicHost, updateCheckDue, updateHeadline, updatePlan, UPDATE_CHECK_TTL, type HostForm,
 } from './host';
-import type { HostSettings } from './types';
+import type { HostSettings, ServerUpdateCheck } from './types';
 
 const base: HostSettings = {
   server_name: 'My server',
@@ -105,5 +105,44 @@ describe('run state and log', () => {
     expect(logLevel('2026 ERROR x: y')).toBe('error');
     expect(logLevel('2026  WARN x: y')).toBe('warn');
     expect(logLevel('2026  INFO x: y')).toBe('plain');
+  });
+});
+
+describe('server updates', () => {
+  const check = (over: Partial<ServerUpdateCheck> = {}): ServerUpdateCheck => ({
+    installed: '0.2.0',
+    release: { repo: 'Distorbed678/Poe2Server', tag: 'server-v0.3.0', version: '0.3.0', game_version: '0.5.5e', prerelease: false, asset_name: 'a', asset_url: 'u', size: 1, sha256_url: 's', notes: '- new', html_url: null },
+    update_available: true,
+    error: null,
+    checked_at: 1000,
+    ...over,
+  });
+
+  it('says what is on offer, or nothing', () => {
+    expect(updateHeadline(check())).toBe('Server update available (v0.3.0)');
+    expect(updateHeadline(check({ update_available: false }))).toBeNull();
+    expect(updateHeadline(check({ release: null }))).toBeNull();
+    expect(updateHeadline(null)).toBeNull();
+  });
+
+  it('asks again after the TTL, for another game version, or when forced', () => {
+    const last = { at: 1000, game: '0.5.5e' };
+    expect(updateCheckDue(null, '0.5.5e', 1001)).toBe(true);
+    expect(updateCheckDue(last, '0.5.5e', 1000 + UPDATE_CHECK_TTL - 1)).toBe(false);
+    expect(updateCheckDue(last, '0.5.5e', 1000 + UPDATE_CHECK_TTL)).toBe(true);
+    expect(updateCheckDue(last, '0.6.0', 1001)).toBe(true);
+    expect(updateCheckDue(last, '0.5.5e', 1001, true)).toBe(true);
+  });
+
+  it('describes the steps, which depend on the server running', () => {
+    const running = updatePlan(true);
+    expect(running).toContain('stops the server');
+    expect(running).toContain('starts the server again');
+    expect(running).toContain('If anything fails, the old version is put back.');
+    const stopped = updatePlan(false);
+    expect(stopped).not.toContain('stops the server');
+    expect(stopped).not.toContain('starts the server again');
+    expect(stopped).toContain('backs up its database, installs the new version and keeps your settings (new settings get their defaults).');
+    expect(updatePlan(false, false)).toContain('The update installs the new version and keeps your settings');
   });
 });

@@ -5,7 +5,7 @@
  * second game version, `?official` starts in the official mode, `?empty` has no servers.
  * More switches: `?installing` (a running download with speed), `?paused`, `?lowspace`, `?offline`
  * (no news, no server list), `?nonews`, `?motd`, `?nolist`, `?nobackups`, `?nologs`, `?skipped`;
- * mods: `?mods` (a cache with mods), `?modsync[=off|auto]` (server p1 requires two mods; Ask dialog at Play), `?offline` also affects the mod index.
+ * hosting: `?hostpkg` (a server is installed and set up), `?serverupdate` (the same, and a newer server release is on offer; `&serverrunning` runs it); mods: `?mods` (a cache with mods), `?modsync[=off|auto]` (server p1 requires two mods; Ask dialog at Play), `?offline` also affects the mod index.
  */
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
@@ -74,6 +74,16 @@ export function installMock(params: URLSearchParams): void {
   // The client hook: `?nohook` starts without one, `?hookupdate` pretends a newer release exists.
   const hookDir = '/home/user/.local/share/poe2-launcher/hook/packages';
   const hookPkg = (version: string) => ({ dir: `${hookDir}/${version}`, name: `poe-hook-v${version}-game-0.5.5e-windows-x86_64`, version, game_versions: ['0.5.5e'], mod_abi: 1, commit: 'abc1234' });
+  // The hosted server: installed version (null: none) and whether it runs.
+  let hostVersion: string | null = params.has('hostpkg') || params.has('serverupdate') ? '0.2.0' : null;
+  let hostRunning = params.has('serverrunning');
+  const hostPkg = (v: string) => ({ dir: `/home/user/.local/share/poe2-launcher/server/packages/poe-server-v${v}-game-0.5.5e-linux-x86_64`, name: `poe-server-v${v}-game-0.5.5e-linux-x86_64`, server_version: v, game_version: '0.5.5e', platform: 'linux', commit: 'abc1234' });
+  const hostRelease = () => ({
+    repo: 'Distorbed678/Poe2Server', tag: 'server-v0.3.0', version: '0.3.0', game_version: '0.5.5e', prerelease: false,
+    asset_name: 'poe-server-v0.3.0-game-0.5.5e-linux-x86_64.tar.gz', asset_url: 'https://example.invalid/a', size: 41_000_000, sha256_url: 'https://example.invalid/a.sha256',
+    notes: '## Server 0.3.0\n\n- Terrain for more areas\n- **New:** `[web] cors` setting\n- Fixes a crash when a player leaves during a transfer',
+    html_url: 'https://github.com/Distorbed678/Poe2Server/releases/tag/server-v0.3.0',
+  });
   let hookVersion: string | null = params.has('nohook') ? null : params.has('hookupdate') ? '0.1.0' : '0.2.0';
   const hookStatus = () => ({
     game_version: current().official ? '0.5.5e' : current().version, repo: 'Distorbed678/Poe2ClientHook',
@@ -263,11 +273,13 @@ export function installMock(params: URLSearchParams): void {
         case 'hook_check': return { release: hookRelease(), update_available: hookVersion !== '0.2.0' };
         case 'hook_install_latest': hookVersion = '0.2.0'; return { hook: hookPkg('0.2.0'), sha256: 'f'.repeat(64), source: 'download' };
         case 'host_status': return {
-          settings: { server_name: 'My private realm', cluster_id: 'my-cluster', login_port: 20481, instance_port: 6112, web_port: 8080, public_host: '192.168.1.20', web_public: false, open_registration: true, admin_name: 'admin', autostart: false, package_dir: null, configured: false, profile_id: null },
-          package: null, package_problem: null, platform: 'linux', game_version: current().version, game_installed: current().installed,
-          install_dir: status().install_dir, run: { state: 'stopped' }, info: null, web_url: 'http://127.0.0.1:8080', lan_ip: '192.168.1.20',
+          settings: { server_name: 'My private realm', cluster_id: 'my-cluster', login_port: 20481, instance_port: 6112, web_port: 8080, public_host: '192.168.1.20', web_public: false, open_registration: true, admin_name: 'admin', autostart: false, package_dir: hostVersion ? hostPkg(hostVersion).dir : null, configured: hostVersion !== null, profile_id: null },
+          package: hostVersion ? hostPkg(hostVersion) : null, package_problem: null, platform: 'linux', game_version: current().version, game_installed: current().installed,
+          install_dir: status().install_dir, run: hostRunning ? { state: 'running', pid: 4242 } : { state: 'stopped' }, info: null, web_url: 'http://127.0.0.1:8080', lan_ip: '192.168.1.20',
           log_file: '/home/user/.local/share/poe2-launcher/server/server.log', busy: false, hosting_guide_url: 'https://example.invalid',
         };
+        case 'host_update_check': return { installed: hostVersion, release: hostVersion ? hostRelease() : null, update_available: hostVersion !== null && hostVersion !== '0.3.0' && params.has('serverupdate'), error: null, checked_at: now };
+        case 'host_update_apply': { const from = hostVersion ?? '0.2.0'; hostVersion = '0.3.0'; return { updated: true, from, to: '0.3.0', package: hostPkg('0.3.0'), was_running: hostRunning, restarted: hostRunning, backup: 'server-20261022-134501-pre-update.sqlite', sha256: 'e'.repeat(64) }; }
         case 'host_log_tail': return [];
         case 'plugin:updater|check': return null;
         case 'plugin:dialog|open': return null;

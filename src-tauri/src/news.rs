@@ -71,7 +71,7 @@ pub const REPOS: [RepoSource; 3] = [
         label: "Launcher",
     },
     RepoSource {
-        repo: "Distorbed678/Poe2ModdingProject",
+        repo: "Distorbed678/Poe2Server",
         prefix: "server-v",
         source: "server",
         label: "Server",
@@ -149,7 +149,7 @@ pub fn truncate(s: &str, max: usize) -> String {
 }
 
 /// Control characters other than newline and tab are dropped; CRLF becomes LF.
-fn clean_text(s: &str) -> String {
+pub(crate) fn clean_text(s: &str) -> String {
     s.replace("\r\n", "\n")
         .chars()
         .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))

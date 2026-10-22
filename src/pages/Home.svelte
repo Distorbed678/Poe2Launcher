@@ -7,6 +7,7 @@
   import { serverCompat, versionLabel } from '../lib/gameversion';
   import { isPlainHttpBlocked } from '../lib/url';
   import { plainText } from '../lib/markdown';
+  import { updateHeadline } from '../lib/host';
   import PageHead from '../lib/ui/PageHead.svelte';
   import Icon from '../lib/ui/Icon.svelte';
   import Chip from '../lib/ui/Chip.svelte';
@@ -25,6 +26,7 @@
   const busy = $derived(app.play.state === 'preparing');
   const running = $derived(app.play.state === 'running');
   const motd = $derived(ok?.motd?.trim() || null);
+  const updateText = $derived(app.official ? null : updateHeadline(app.serverUpdate));
   let checking = $state(false);
   let timer: ReturnType<typeof setInterval> | undefined;
   let open = $state<Record<string, boolean>>({});
@@ -42,6 +44,8 @@
     void check();
   });
   onMount(() => {
+    // A newer server release for the server you host: quiet, not more than every 10 minutes.
+    void app.checkServerUpdate();
     timer = setInterval(() => void check(), 30_000);
   });
   onDestroy(() => timer && clearInterval(timer));
@@ -66,6 +70,16 @@
 <PageHead icon="home" title="Home" sub={app.official ? 'Official servers, read-only' : 'Your server, setup and what is new'} />
 
 <SetupChecklist />
+
+{#if updateText && app.serverUpdate?.release}
+  <div class="notice accent update-note" role="status">
+    <span class="notice-title"><Icon name="download" size={16} /> {updateText}</span>
+    <p class="hint">
+      You host version {app.serverUpdate.installed}. The update stops the server for a moment, backs up its database and keeps your settings.
+      <a href="#/host">Open Host</a> to read the release notes and update.
+    </p>
+  </div>
+{/if}
 
 {#if app.official}
   <section class="card hero official">
@@ -194,6 +208,7 @@
 </section>
 
 <style>
+  .update-note { margin-bottom: 14px; }
   .hero { padding: 20px; }
   .hero.official { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
   .hero-main { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }

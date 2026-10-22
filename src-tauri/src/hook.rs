@@ -508,6 +508,8 @@ mod tests {
     fn rel(tag: &str, pre: bool, names: &[&str]) -> GhRelease {
         GhRelease {
             tag_name: tag.into(),
+            body: None,
+            html_url: None,
             draft: false,
             prerelease: pre,
             assets: names

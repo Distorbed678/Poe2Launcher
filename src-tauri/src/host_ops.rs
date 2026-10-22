@@ -31,6 +31,24 @@ impl Drop for BusyGuard<'_> {
     }
 }
 
+/// The config files of the package that is being replaced.
+#[derive(Debug, Clone)]
+pub struct PreviousConfig {
+    pub example: String,
+    pub config: String,
+}
+
+impl PreviousConfig {
+    /// `None` when the old package has no readable `server.toml` / `server.example.toml`.
+    pub fn read(dir: &Path) -> Option<Self> {
+        let cfg = dir.join("config");
+        Some(Self {
+            example: std::fs::read_to_string(cfg.join("server.example.toml")).ok()?,
+            config: std::fs::read_to_string(cfg.join("server.toml")).ok()?,
+        })
+    }
+}
+
 /// The wizard's answers. The admin password is typed in the UI, handed once to
 /// `poe-server account create --password-stdin` and wiped; it is never stored, logged, or put
 /// on a command line.
@@ -98,19 +116,19 @@ impl Core {
         HostSettings::load(self.host_dirs().settings_file())
     }
 
-    fn host_save(&self, s: &HostSettings) -> Result<()> {
+    pub(crate) fn host_save(&self, s: &HostSettings) -> Result<()> {
         s.save(self.host_dirs().settings_file())
     }
 
     /// Hosting is for the private game versions; "Official (read-only)" has no server.
-    fn host_private_only(&self) -> Result<()> {
+    pub(crate) fn host_private_only(&self) -> Result<()> {
         if self.version().is_official() {
             bail!("hosting a server needs a private game version: pick one in the version menu");
         }
         Ok(())
     }
 
-    fn host_begin(&self) -> Result<BusyGuard<'_>> {
+    pub(crate) fn host_begin(&self) -> Result<BusyGuard<'_>> {
         self.host_private_only()?;
         let mut busy = self.host_busy.lock().unwrap();
         if *busy {
@@ -120,17 +138,17 @@ impl Core {
         Ok(BusyGuard(&self.host_busy))
     }
 
-    fn host_step(&self, step: &str) {
+    pub(crate) fn host_step(&self, step: &str) {
         self.emit("host:setup", json!({"step": step}));
         self.host.note(self.events.as_ref(), step);
     }
 
-    fn host_os(&self) -> &'static str {
+    pub(crate) fn host_os(&self) -> &'static str {
         std::env::consts::OS
     }
 
     /// The package the settings point at, checked.
-    fn host_package(&self, s: &HostSettings) -> Result<PackageInfo> {
+    pub(crate) fn host_package(&self, s: &HostSettings) -> Result<PackageInfo> {
         let dir = s
             .package_dir
             .as_ref()
@@ -203,8 +221,7 @@ impl Core {
 
     pub async fn host_find_release_at(&self, api_base: &str) -> Result<ServerRelease> {
         self.host_private_only()?;
-        let releases = host::fetch_releases(api_base).await?;
-        host::pick_release(&releases, &self.version().version, self.host_os())
+        host::find_release(api_base, &self.version().version, self.host_os()).await
     }
 
     /// Finds, downloads, verifies (SHA-256 against the release's `.sha256`) and installs the
@@ -228,6 +245,19 @@ impl Core {
                 source: "current".into(),
             });
         }
+        let (named, got) = self.host_download_verified(&release).await?;
+        let out = self.host_adopt(&named, Some(got), true, "download").await;
+        let _ = tokio::fs::remove_file(&named).await;
+        out
+    }
+
+    /// Downloads the release's archive into the downloads folder and checks its SHA-256
+    /// against the release's `.sha256` file (and its size). Returns the archive's path and
+    /// hash; on a mismatch the download is deleted. The caller holds the busy flag.
+    pub(crate) async fn host_download_verified(
+        &self,
+        release: &ServerRelease,
+    ) -> Result<(PathBuf, String)> {
         let dirs = self.host_dirs();
         reject_steam_paths(&dirs.packages(), "server folder")?;
         self.host_step(&format!(
@@ -261,9 +291,7 @@ impl Core {
         let named = dirs.downloads().join(&release.asset_name);
         tokio::fs::rename(&archive, &named).await?;
         self.host_step("checksum matches; unpacking");
-        let out = self.host_adopt(&named, Some(got), true, "download").await;
-        let _ = tokio::fs::remove_file(&named).await;
-        out
+        Ok((named, got))
     }
 
     /// Installs a package the user has: a `.tar.gz` / `.zip` (checked against a `.sha256` file
@@ -309,6 +337,13 @@ impl Core {
         how: &str,
     ) -> Result<InstallOutcome> {
         let dirs = self.host_dirs();
+        // The config of the package being replaced, read before it can disappear.
+        let before = self.host_settings()?;
+        let previous = before
+            .package_dir
+            .as_deref()
+            .filter(|_| before.configured)
+            .and_then(PreviousConfig::read);
         let (src, packages, game, os) = (
             source.to_path_buf(),
             dirs.packages(),
@@ -324,8 +359,9 @@ impl Core {
         host::prune_packages(&dirs.packages(), &package.dir);
         if s.configured {
             // An update: the package changed, so the config in it is written again from the
-            // saved answers (the database lives outside the package and stays).
-            self.host_write_configs(&s, &package)
+            // saved answers and what the user changed in the old one (the database lives
+            // outside the package and stays).
+            self.host_write_configs_carrying(&s, &package, previous.as_ref())
                 .context("the new package is installed, but its config could not be written")?;
         }
         self.emit("host:installed", json!({"package": package.name}));
@@ -347,9 +383,35 @@ impl Core {
     // --- config and setup ----------------------------------------------------------------
 
     /// Writes `config/server.toml`.
-    fn host_write_configs(&self, s: &HostSettings, pkg: &PackageInfo) -> Result<PathBuf> {
-        let example = std::fs::read_to_string(pkg.dir.join("config").join("server.example.toml"))
-            .context("reading the package's config/server.example.toml")?;
+    pub(crate) fn host_write_configs(
+        &self,
+        s: &HostSettings,
+        pkg: &PackageInfo,
+    ) -> Result<PathBuf> {
+        self.host_write_configs_carrying(s, pkg, None)
+    }
+
+    /// Writes `config/server.toml` of `pkg` from its `server.example.toml`, the wizard's answers
+    /// and, when the package replaces another one, what the user changed in the old config
+    /// (see [`host::carry_over_config`]); settings new in this release get their defaults.
+    pub(crate) fn host_write_configs_carrying(
+        &self,
+        s: &HostSettings,
+        pkg: &PackageInfo,
+        previous: Option<&PreviousConfig>,
+    ) -> Result<PathBuf> {
+        let mut example =
+            std::fs::read_to_string(pkg.dir.join("config").join("server.example.toml"))
+                .context("reading the package's config/server.example.toml")?;
+        if let Some(prev) = previous {
+            match host::carry_over_config(&prev.example, &prev.config, &example) {
+                Ok(merged) => example = merged,
+                Err(e) => self.host.note(
+                    self.events.as_ref(),
+                    &format!("the old config could not be carried over, using the defaults: {e:#}"),
+                ),
+            }
+        }
         let game_dir = self.install_dir()?;
         let dirs = self.host_dirs();
         std::fs::create_dir_all(dirs.data())?;
@@ -362,7 +424,7 @@ impl Core {
         Ok(final_cfg)
     }
 
-    fn host_spec(&self, pkg: &PackageInfo, config: &str) -> StartSpec {
+    pub(crate) fn host_spec(&self, pkg: &PackageInfo, config: &str) -> StartSpec {
         StartSpec {
             exe: pkg.dir.join(host::server_exe_name(self.host_os())),
             cwd: pkg.dir.clone(),

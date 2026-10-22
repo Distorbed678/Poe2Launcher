@@ -13,6 +13,7 @@ pub mod hook_ops;
 pub mod host;
 pub mod host_ops;
 pub mod host_run;
+pub mod host_update;
 pub mod keystore;
 pub mod logs;
 pub mod mod_ops;
@@ -178,6 +179,8 @@ pub fn run() {
             commands::host_stop,
             commands::host_log_tail,
             commands::host_set_autostart,
+            commands::host_update_check,
+            commands::host_update_apply,
             commands::host_open_guide,
             commands::server_info,
             commands::account_login,

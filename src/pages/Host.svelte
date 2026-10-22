@@ -11,7 +11,7 @@
   import { ask } from '../lib/confirm.svelte';
   import {
     formFromSettings, isUp, logLevel, playerAddress, portsToForward, pushLog, runLabel, settingsFromForm,
-    validateHostForm, type HostForm,
+    updateHeadline, updatePlan, validateHostForm, type HostForm,
   } from '../lib/host';
   import PageHead from '../lib/ui/PageHead.svelte';
   import Icon from '../lib/ui/Icon.svelte';
@@ -19,16 +19,18 @@
   import Empty from '../lib/ui/Empty.svelte';
   import Spinner from '../lib/ui/Spinner.svelte';
   import Progress from '../lib/ui/Progress.svelte';
-  import type { BackupStatus, HostStatus, InstallOutcome, RunState } from '../lib/types';
+  import Markdown from '../lib/ui/Markdown.svelte';
+  import type { BackupStatus, HostStatus, InstallOutcome, RunState, UpdateOutcome } from '../lib/types';
 
   let status = $state<HostStatus | null>(null);
   let form = $state<HostForm | null>(null);
   let log = $state<string[]>([]);
   let progress = $state<HostProgress | null>(null);
   let step = $state('');
-  let task = $state<'' | 'download' | 'local' | 'setup' | 'start' | 'stop'>('');
+  let task = $state<'' | 'download' | 'local' | 'setup' | 'start' | 'stop' | 'check' | 'update'>('');
   let pkgError = $state('');
   let outcome = $state<InstallOutcome | null>(null);
+  let updated = $state<UpdateOutcome | null>(null);
   let ipNote = $state('');
   const dlRate = new RateTracker();
   let backups = $state<BackupStatus | null>(null);
@@ -48,6 +50,8 @@
   const noGame = $derived(status !== null && !status.game_installed);
   const noPackage = $derived(status !== null && status.package === null);
   const canSetup = $derived(!!form && !up && task === '' && !status?.busy && errors.length === 0 && !noGame && !noPackage);
+  const upd = $derived(app.serverUpdate);
+  const headline = $derived(updateHeadline(upd));
   const pct = $derived(progress && progress.total > 0 ? Math.min(100, Math.round((progress.done / progress.total) * 100)) : null);
 
   async function refresh() {
@@ -76,6 +80,8 @@
     log = (await run(() => ipc.hostLogTail(500))) ?? [];
     await refresh();
     void loadBackups();
+    // A newer server release: quiet, and not more than every 10 minutes.
+    void app.checkServerUpdate();
     // The "ready" light and a crashed server need a look now and then.
     timer = setInterval(() => {
       void refresh();
@@ -149,7 +155,7 @@
     if (s) await loadBackups();
   }
 
-  const kindLabel = { manual: 'manual', auto: 'before start', 'pre-restore': 'before restore', other: 'other' } as const;
+  const kindLabel = { manual: 'manual', auto: 'before start', 'pre-restore': 'before restore', 'pre-update': 'before update', other: 'other' } as const;
 
   // --- the package ---------------------------------------------------------------------------
 
@@ -169,6 +175,53 @@
     progress = null;
     dlRate.reset();
     await refresh();
+    app.forgetServerUpdate();
+    void app.checkServerUpdate(true);
+  }
+
+  async function checkUpdates() {
+    task = 'check';
+    pkgError = '';
+    updated = null;
+    await app.checkServerUpdate(true);
+    task = '';
+    if (app.serverUpdate && !app.serverUpdate.error && !app.serverUpdate.update_available) {
+      toasts.show('ok', 'The server is the newest release for your game version');
+    }
+  }
+
+  async function applyUpdate() {
+    const rel = upd?.release;
+    if (!rel || task !== '') return;
+    if (up) {
+      const yes = await ask({
+        title: `Update the server to ${rel.version}?`,
+        message: `The running server is stopped (players are disconnected), its database is backed up, the new version is installed with your settings kept, and the server starts again. If the new version does not start, the old one is put back.`,
+        confirmLabel: 'Update',
+      });
+      if (!yes) return;
+    }
+    task = 'update';
+    step = 'starting';
+    pkgError = '';
+    outcome = null;
+    updated = null;
+    progress = null;
+    dlRate.reset();
+    try {
+      updated = await ipc.hostUpdateApply();
+      toasts.show('ok', updated.updated ? `Server updated to ${updated.to}` : 'Already the newest release');
+    } catch (e) {
+      pkgError = e instanceof Error ? e.message : String(e);
+    }
+    task = '';
+    step = '';
+    progress = null;
+    dlRate.reset();
+    await refresh();
+    void loadBackups();
+    app.forgetServerUpdate();
+    void app.checkServerUpdate(true);
   }
 
   async function pickLocal(directory: boolean) {
@@ -189,6 +242,8 @@
     }
     task = '';
     await refresh();
+    app.forgetServerUpdate();
+    void app.checkServerUpdate(true);
   }
 
   // --- network helpers -------------------------------------------------------------------------
@@ -292,14 +347,41 @@
         <p class="muted">No server program yet. Download the release that matches your game version ({status.game_version}), or use a package you already have.</p>
         {#if status.package_problem}<p class="err">{status.package_problem}</p>{/if}
       {/if}
+      {#if headline && upd?.release && status.package}
+        <div class="notice accent" style="margin-top: 12px">
+          <span class="notice-title"><Icon name="download" size={16} /> {headline}</span>
+          <p class="hint">
+            You have {status.package.server_version}.
+            {#if upd.release.repo !== 'Distorbed678/Poe2Server'}It comes from the project's older release page ({upd.release.repo}).{/if}
+          </p>
+          {#if upd.release.notes}
+            <div class="notes"><Markdown source={upd.release.notes} compact /></div>
+          {/if}
+          <p class="hint">{updatePlan(up, !!backups?.database_size)}</p>
+          <div class="row">
+            <button type="button" class="btn primary" disabled={task !== '' || status.busy} onclick={applyUpdate}>
+              {#if task === 'update'}<Spinner size={14} />{:else}<Icon name="download" size={14} />{/if} Update to {upd.release.version}
+            </button>
+            {#if upd.release.html_url}
+              <button type="button" class="link" onclick={() => void run(() => ipc.openLink(upd!.release!.html_url!))}>Release page <Icon name="external" size={12} /></button>
+            {/if}
+          </div>
+        </div>
+      {:else if status.package && upd?.error}
+        <p class="hint">Could not look for a server update: {upd.error}</p>
+      {/if}
       <div class="row" style="margin-top: 8px">
-        <button type="button" class="btn primary" disabled={task !== '' || up || status.busy} onclick={download}>
-          {status.package ? 'Update to the latest release' : 'Download the latest release'}
-        </button>
+        {#if status.package}
+          <button type="button" class="btn" disabled={task !== '' || status.busy} onclick={checkUpdates}>
+            {#if task === 'check'}<Spinner size={14} />{:else}<Icon name="refresh" size={14} />{/if} Check for updates
+          </button>
+        {:else}
+          <button type="button" class="btn primary" disabled={task !== '' || up || status.busy} onclick={download}>Download the latest release</button>
+        {/if}
         <button type="button" class="btn" disabled={task !== '' || up || status.busy} onclick={() => pickLocal(false)}>Use a package file...</button>
         <button type="button" class="btn" disabled={task !== '' || up || status.busy} onclick={() => pickLocal(true)}>Use a package folder...</button>
       </div>
-      {#if task === 'download' || task === 'local'}
+      {#if task === 'download' || task === 'local' || task === 'update'}
         <p class="hint"><Spinner size={12} /> {step || 'Working...'}</p>
         {#if pct !== null && progress?.phase === 'download'}
           <Progress value={pct} />
@@ -307,6 +389,13 @@
         {/if}
       {/if}
       {#if pkgError}<p class="err" role="alert" style="white-space: pre-wrap">{pkgError}</p>{/if}
+      {#if updated}
+        <p class="hint">
+          {updated.updated
+            ? `Updated ${updated.from} to ${updated.to}${updated.restarted ? '; the server is running again' : ''}. SHA-256 checked${updated.backup ? `; the database was backed up first (${updated.backup})` : ''}.`
+            : 'Already the newest release for your game version.'}
+        </p>
+      {/if}
       {#if outcome}
         <p class="hint">
           {outcome.source === 'current'
@@ -512,4 +601,5 @@
   .log :global(.launcher) { color: var(--link); }
   .inline { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap; }
   .keep { width: 70px; }
+  .notes { max-height: 220px; overflow: auto; margin: 6px 0; }
 </style>

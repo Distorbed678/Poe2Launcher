@@ -77,7 +77,7 @@ async fn mock_news() -> (NewsSources, Arc<GhState>) {
                     }
                     let list = match r.as_str() {
                         "Poe2Launcher" => vec![release("v0.2.0", "2026-10-20T10:00:00Z", "- new look"), release("v0.1.1", "2026-10-10T10:00:00Z", "")],
-                        "Poe2ModdingProject" => vec![
+                        "Poe2Server" => vec![
                             release("server-v0.9.0", "2026-10-21T10:00:00Z", "movement"),
                             release("dat-schema-0.5.5e", "2026-10-21T12:00:00Z", "not news"),
                         ],

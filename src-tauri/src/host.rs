@@ -2,11 +2,16 @@
 //! turning the wizard's answers into its `config/server.toml`. No processes here (see
 //! [`crate::host_run`]) and no Tauri types, so it is all testable.
 //!
-//! The release is a package built by the main repository's CI (`.github/scripts/package-server.sh`,
-//! `docs/guides/releasing-server.md` there): `poe-server-v<ver>-game-<game version>-<linux|windows>-x86_64`
+//! The release is a package built by the CI of Poe2Server (`.github/scripts/package-server.sh`,
+//! `docs/releasing.md` there): `poe-server-v<ver>-game-<game version>-<linux|windows>-x86_64`
 //! as `.tar.gz` / `.zip` with a `.sha256` next to it. It mirrors the repository layout, so the
 //! server runs from its own folder. No game files are inside: `game_dir` points at the
 //! launcher's installed game.
+//!
+//! Releases are looked up in [`REPO`] first and, when nothing there fits, in [`FALLBACK_REPO`]
+//! (the two releases made before the server moved to its own repository). Packages come in two
+//! layouts: the version file is `modules/protocol/versions/<game>.toml` (Poe2Server) or
+//! `versions/<game>.toml` (the two old releases).
 
 use std::{
     net::{IpAddr, TcpListener, UdpSocket},
@@ -23,12 +28,15 @@ use toml_edit::{DocumentMut, Item, Table};
 use crate::paths::{Dirs, reject_steam_paths, write_atomic};
 
 /// GitHub repository whose releases (tag `server-v*`) carry the server packages.
-pub const REPO: &str = "Distorbed678/Poe2ModdingProject";
+pub const REPO: &str = "Distorbed678/Poe2Server";
+/// Asked when [`REPO`] has nothing for this game version and platform: it still holds the
+/// releases `server-v0.1.0` and `server-v0.2.0` made before the server had its own repository.
+pub const FALLBACK_REPO: &str = "Distorbed678/Poe2ModdingProject";
 pub const TAG_PREFIX: &str = "server-v";
 pub const API_BASE: &str = "https://api.github.com";
 /// Shown to people who want to forward ports.
 pub const HOSTING_GUIDE_URL: &str =
-    "https://github.com/Distorbed678/Poe2ModdingProject/blob/main/docs/guides/hosting.md";
+    "https://github.com/Distorbed678/Poe2Server/blob/main/docs/hosting.md";
 /// Plain-text "what is my public IP" service, only asked when the user clicks the button.
 pub const PUBLIC_IP_URL: &str = "https://api.ipify.org";
 
@@ -276,6 +284,10 @@ pub struct GhAsset {
 pub struct GhRelease {
     pub tag_name: String,
     #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub html_url: Option<String>,
+    #[serde(default)]
     pub draft: bool,
     #[serde(default)]
     pub prerelease: bool,
@@ -286,6 +298,8 @@ pub struct GhRelease {
 /// The package picked for this machine.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ServerRelease {
+    /// The repository the release is in ([`REPO`] or [`FALLBACK_REPO`]).
+    pub repo: String,
     pub tag: String,
     pub version: String,
     pub game_version: String,
@@ -295,10 +309,17 @@ pub struct ServerRelease {
     pub size: u64,
     /// The `.sha256` file next to the archive.
     pub sha256_url: String,
+    /// The release notes (a markdown subset, cleaned and cut; shown as text by the UI).
+    pub notes: String,
+    /// The release's page on GitHub (https only).
+    pub html_url: Option<String>,
 }
 
+const MAX_NOTES: usize = 4000;
+
 /// The newest stable release (a pre-release only when there is no stable one) whose package
-/// is for `game_version` on `os`, with its checksum file.
+/// is for `game_version` on `os`, with its checksum file. `repo` of the result is left empty:
+/// the caller knows which repository the list came from ([`find_release`]).
 pub fn pick_release(releases: &[GhRelease], game_version: &str, os: &str) -> Result<ServerRelease> {
     let platform = platform_for(os)?;
     let mut best: Option<(bool, semver::Version, ServerRelease)> = None;
@@ -328,6 +349,7 @@ pub fn pick_release(releases: &[GhRelease], game_version: &str, os: &str) -> Res
                 continue;
             };
             let candidate = ServerRelease {
+                repo: String::new(),
                 tag: r.tag_name.clone(),
                 version: n.version.clone(),
                 game_version: n.game_version,
@@ -336,6 +358,11 @@ pub fn pick_release(releases: &[GhRelease], game_version: &str, os: &str) -> Res
                 asset_url: a.browser_download_url.clone(),
                 size: a.size,
                 sha256_url: sha.browser_download_url.clone(),
+                notes: crate::news::truncate(
+                    crate::news::clean_text(r.body.as_deref().unwrap_or("")).trim(),
+                    MAX_NOTES,
+                ),
+                html_url: r.html_url.clone().filter(|u| crate::news::is_https_link(u)),
             };
             // Stable beats pre-release, then the higher version.
             let key = (!r.prerelease, v);
@@ -363,10 +390,10 @@ pub fn pick_release(releases: &[GhRelease], game_version: &str, os: &str) -> Res
     )
 }
 
-/// Lists the GitHub releases of [`REPO`]. `api_base` is a parameter for tests.
-pub async fn fetch_releases(api_base: &str) -> Result<Vec<GhRelease>> {
+/// Lists the GitHub releases of `repo`. `api_base` is a parameter for tests.
+pub async fn fetch_releases(api_base: &str, repo: &str) -> Result<Vec<GhRelease>> {
     let url = format!(
-        "{}/repos/{REPO}/releases?per_page=30",
+        "{}/repos/{repo}/releases?per_page=30",
         api_base.trim_end_matches('/')
     );
     let res = http_client()?
@@ -389,7 +416,7 @@ pub async fn fetch_releases(api_base: &str) -> Result<Vec<GhRelease>> {
     }
     match status.as_u16() {
         404 => bail!(
-            "no server releases can be read from github.com/{REPO}: the repository is still \
+            "no server releases can be read from github.com/{repo}: the repository is still \
              private or has no releases yet (GitHub answers 404 for both). Use \"Use a local \
              package\" with a package you built or were given"
         ),
@@ -399,6 +426,49 @@ pub async fn fetch_releases(api_base: &str) -> Result<Vec<GhRelease>> {
             status.as_u16()
         ),
         code => bail!("GitHub answered HTTP {code} when listing the server releases"),
+    }
+}
+
+/// The newest server release for `game_version` on `os`: from [`REPO`], and only when that has
+/// none that fits (or cannot be read) from [`FALLBACK_REPO`]. The error is the first
+/// repository's, because that is the one a user should look at.
+pub async fn find_release(api_base: &str, game_version: &str, os: &str) -> Result<ServerRelease> {
+    platform_for(os)?;
+    let first = async {
+        let list = fetch_releases(api_base, REPO).await?;
+        pick_release(&list, game_version, os)
+    }
+    .await;
+    let err = match first {
+        Ok(mut r) => {
+            r.repo = REPO.into();
+            return Ok(r);
+        }
+        Err(e) => e,
+    };
+    let second = async {
+        let list = fetch_releases(api_base, FALLBACK_REPO).await?;
+        pick_release(&list, game_version, os)
+    }
+    .await;
+    match second {
+        Ok(mut r) => {
+            r.repo = FALLBACK_REPO.into();
+            Ok(r)
+        }
+        Err(_) => Err(err),
+    }
+}
+
+/// Whether `candidate` is a newer server version than `installed` (semver; two versions that
+/// are not semver differ = newer, which is the safe answer for "offer the update").
+pub fn is_newer(installed: &str, candidate: &str) -> bool {
+    match (
+        semver::Version::parse(installed),
+        semver::Version::parse(candidate),
+    ) {
+        (Ok(a), Ok(b)) => b > a,
+        _ => installed != candidate,
     }
 }
 
@@ -531,6 +601,14 @@ struct ReleaseJson {
     commit: String,
 }
 
+/// Where a package keeps the version file of `game_version`: the current layout first.
+pub fn version_file_candidates(game_version: &str) -> [String; 2] {
+    [
+        format!("modules/protocol/versions/{game_version}.toml"),
+        format!("versions/{game_version}.toml"),
+    ]
+}
+
 pub fn server_exe_name(os: &str) -> &'static str {
     if os == "windows" {
         "poe-server.exe"
@@ -564,7 +642,6 @@ pub fn inspect_package(dir: &Path, game_version: &str, os: &str) -> Result<Packa
     for needed in [
         exe.to_owned(),
         "config/server.example.toml".to_owned(),
-        format!("versions/{game_version}.toml"),
         "third_party/dat-schema/schema-poe2.min.json".to_owned(),
     ] {
         ensure!(
@@ -572,6 +649,14 @@ pub fn inspect_package(dir: &Path, game_version: &str, os: &str) -> Result<Packa
             "the package is incomplete: {needed} is missing"
         );
     }
+    // The version file is in the protocol module (Poe2Server packages) or at the top (the two
+    // packages made in Poe2ModdingProject).
+    ensure!(
+        version_file_candidates(game_version)
+            .iter()
+            .any(|f| dir.join(f).is_file()),
+        "the package is incomplete: modules/protocol/versions/{game_version}.toml is missing"
+    );
     ensure!(
         dir.join("modules/protocol/opcodes").is_dir(),
         "the package is incomplete: modules/protocol/opcodes is missing"
@@ -703,6 +788,18 @@ pub fn install_package(
     game_version: &str,
     os: &str,
 ) -> Result<PackageInfo> {
+    install_package_keeping(source, packages_dir, game_version, os, None)
+}
+
+/// Like [`install_package`], but refuses (before anything is replaced) to overwrite the folder
+/// `keep`: an update keeps the old package until the new one works.
+pub fn install_package_keeping(
+    source: &Path,
+    packages_dir: &Path,
+    game_version: &str,
+    os: &str,
+    keep: Option<&Path>,
+) -> Result<PackageInfo> {
     reject_steam_paths(packages_dir, "server folder")?;
     std::fs::create_dir_all(packages_dir)?;
     let staging = packages_dir.join(".staging");
@@ -725,6 +822,12 @@ pub fn install_package(
             "the package has no usable name"
         );
         let target = packages_dir.join(&info.name);
+        ensure!(
+            keep != Some(target.as_path()),
+            "the new package would be installed in the folder of the current one ({}); \
+             nothing was changed",
+            target.display()
+        );
         if target.exists() {
             std::fs::remove_dir_all(&target)
                 .with_context(|| format!("replacing {}", target.display()))?;
@@ -851,6 +954,79 @@ pub fn render_config(
     Ok(doc.to_string())
 }
 
+/// A value without the comments and spacing around it, to compare two of them.
+fn bare(v: &toml_edit::Value) -> String {
+    let mut v = v.clone();
+    *v.decor_mut() = toml_edit::Decor::default();
+    v.to_string()
+}
+
+/// Every setting of `table` as (path, text): plain values and arrays of tables as a whole.
+fn flatten(table: &Table, path: &mut Vec<String>, out: &mut Vec<(Vec<String>, String)>) {
+    for (key, item) in table.iter() {
+        path.push(key.to_owned());
+        match item {
+            Item::Table(t) => flatten(t, path, out),
+            Item::Value(v) => out.push((path.clone(), bare(v))),
+            Item::ArrayOfTables(a) => out.push((
+                path.clone(),
+                a.iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n--\n"),
+            )),
+            Item::None => {}
+        }
+        path.pop();
+    }
+}
+
+/// The new package's example config with what the user changed in the old package's config:
+/// every setting of `old_config` whose value differs from `old_example` (or that the old
+/// example does not have at all) is copied over. Settings the user never touched take the new
+/// package's defaults, so keys that are new in this release appear with their defaults and
+/// changed defaults apply. The result is for [`render_config`], which then puts the wizard's
+/// answers on top. A broken `old_config` is an error; the caller then uses the plain example.
+pub fn carry_over_config(old_example: &str, old_config: &str, new_example: &str) -> Result<String> {
+    let old_example: DocumentMut = old_example
+        .parse()
+        .context("the old package's server.example.toml is not valid TOML")?;
+    let old_config: DocumentMut = old_config
+        .parse()
+        .context("the old config/server.toml is not valid TOML")?;
+    let mut doc: DocumentMut = new_example
+        .parse()
+        .context("the new package's server.example.toml is not valid TOML")?;
+    let (mut base, mut mine) = (Vec::new(), Vec::new());
+    flatten(old_example.as_table(), &mut Vec::new(), &mut base);
+    flatten(old_config.as_table(), &mut Vec::new(), &mut mine);
+    for (path, text) in mine {
+        if base.iter().any(|(p, t)| *p == path && *t == text) {
+            continue; // as shipped: take the new default
+        }
+        let Some((key, parents)) = path.split_last() else {
+            continue;
+        };
+        let parents: Vec<&str> = parents.iter().map(String::as_str).collect();
+        // Look the setting up in the old config again for its real item.
+        let mut cur = old_config.as_item();
+        for k in &path {
+            match cur.get(k.as_str()) {
+                Some(next) => cur = next,
+                None => break,
+            }
+        }
+        match cur {
+            Item::Value(v) => set_value(&mut doc, &parents, key, v.clone()),
+            Item::ArrayOfTables(a) => {
+                table_at(&mut doc, &parents)[key.as_str()] = Item::ArrayOfTables(a.clone());
+            }
+            _ => {}
+        }
+    }
+    Ok(doc.to_string())
+}
+
 // ---------------------------------------------------------------------------------------------
 // Network helpers
 
@@ -933,6 +1109,8 @@ mod tests {
     fn rel(tag: &str, pre: bool, names: &[&str]) -> GhRelease {
         GhRelease {
             tag_name: tag.into(),
+            body: None,
+            html_url: None,
             draft: false,
             prerelease: pre,
             assets: names
@@ -1228,5 +1406,135 @@ path = "runtime/server.sqlite"
             sibling_checksum_file(&a).unwrap(),
             tmp.path().join(format!("{LIN}.sha256"))
         );
+    }
+
+    #[test]
+    fn newer_versions_are_compared_as_semver() {
+        assert!(is_newer("0.2.0", "0.10.0"));
+        assert!(is_newer("0.2.0-rc1", "0.2.0"));
+        assert!(!is_newer("0.2.1", "0.2.1"));
+        assert!(!is_newer("0.3.0", "0.2.9"));
+        // Not semver: a difference is offered as an update.
+        assert!(is_newer("dev-abc", "0.2.0"));
+        assert!(!is_newer("dev-abc", "dev-abc"));
+    }
+
+    #[test]
+    fn both_package_layouts_are_accepted() {
+        let make = |version_file: Option<&str>| {
+            let d = tempfile::tempdir().unwrap();
+            let r = d.path();
+            let put = |p: &str| {
+                let f = r.join(p);
+                std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+                std::fs::write(f, b"x").unwrap();
+            };
+            std::fs::write(
+                r.join("release.json"),
+                format!(
+                    r#"{{"name":"n","server_version":"0.2.1","game_version":"0.5.5e","platform":"{}"}}"#,
+                    platform_for(std::env::consts::OS).unwrap()
+                ),
+            )
+            .unwrap();
+            put(server_exe_name(std::env::consts::OS));
+            put("config/server.example.toml");
+            put("third_party/dat-schema/schema-poe2.min.json");
+            put("modules/protocol/opcodes/0.5.5e/a.toml");
+            if let Some(v) = version_file {
+                put(v);
+            }
+            d
+        };
+        let check = |d: &tempfile::TempDir| {
+            inspect_package(d.path(), "0.5.5e", std::env::consts::OS).map(|p| p.server_version)
+        };
+        assert_eq!(
+            check(&make(Some("modules/protocol/versions/0.5.5e.toml"))).unwrap(),
+            "0.2.1"
+        );
+        assert_eq!(check(&make(Some("versions/0.5.5e.toml"))).unwrap(), "0.2.1");
+        let e = check(&make(None)).unwrap_err().to_string();
+        assert!(e.contains("modules/protocol/versions/0.5.5e.toml"), "{e}");
+        // The version file of another game version does not count.
+        assert!(check(&make(Some("versions/0.6.0.toml"))).is_err());
+    }
+
+    const OLD_EXAMPLE: &str = r#"# old
+[game]
+version = "0.5.5e"
+game_dir = "GameFiles"
+
+[network]
+public_host = "127.0.0.1"
+
+[web]
+enabled = false
+rate_limit = 60 # per minute
+
+[[leagues]]
+id = "a"
+
+[[leagues]]
+id = "b"
+"#;
+
+    const NEW_EXAMPLE: &str = r#"# new
+[game]
+version = "0.5.5e"
+game_dir = "GameFiles"
+
+[network]
+public_host = "127.0.0.1"
+
+[web]
+enabled = false
+rate_limit = 120 # per minute, raised in the new release
+cors = "none" # new key
+
+[mods]
+require_client_mods = false # a new section
+
+[[leagues]]
+id = "a"
+"#;
+
+    #[test]
+    fn a_changed_config_keeps_the_users_values_and_takes_new_defaults() {
+        // The user changed one value, the wizard changed others, and left rate_limit alone.
+        let old_cfg = OLD_EXAMPLE
+            .replace("public_host = \"127.0.0.1\"", "public_host = \"10.0.0.5\"")
+            .replace("enabled = false", "enabled = true")
+            .replace("id = \"b\"", "id = \"c\"")
+            + "\n[extra]\nnote = \"mine\"\n";
+        let out = carry_over_config(OLD_EXAMPLE, &old_cfg, NEW_EXAMPLE).unwrap();
+        let doc: DocumentMut = out.parse().unwrap();
+        assert_eq!(doc["network"]["public_host"].as_str(), Some("10.0.0.5"));
+        assert_eq!(doc["web"]["enabled"].as_bool(), Some(true));
+        // Untouched by the user: the new release's default wins.
+        assert_eq!(doc["web"]["rate_limit"].as_integer(), Some(120));
+        assert_eq!(doc["web"]["cors"].as_str(), Some("none"));
+        assert_eq!(doc["mods"]["require_client_mods"].as_bool(), Some(false));
+        // The users's own section and the changed league list come along as a whole.
+        assert_eq!(doc["extra"]["note"].as_str(), Some("mine"));
+        let leagues = doc["leagues"].as_array_of_tables().unwrap();
+        let ids: Vec<_> = leagues.iter().map(|t| t["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["a", "c"]);
+        assert!(out.contains("# new") && out.contains("# per minute, raised"));
+
+        // A config as shipped changes nothing: the new example comes out.
+        let same = carry_over_config(OLD_EXAMPLE, OLD_EXAMPLE, NEW_EXAMPLE).unwrap();
+        assert_eq!(same, NEW_EXAMPLE);
+        // And the wizard's answers still go on top.
+        let s = HostSettings {
+            public_host: "203.0.113.9".into(),
+            ..Default::default()
+        };
+        let rendered = render_config(&out, &s, Path::new("/g"), Path::new("/d")).unwrap();
+        let doc: DocumentMut = rendered.parse().unwrap();
+        assert_eq!(doc["network"]["public_host"].as_str(), Some("203.0.113.9"));
+        assert_eq!(doc["web"]["rate_limit"].as_integer(), Some(120));
+        // A broken old config is an error for the caller to handle.
+        assert!(carry_over_config(OLD_EXAMPLE, "[broken", NEW_EXAMPLE).is_err());
     }
 }

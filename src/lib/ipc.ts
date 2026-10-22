@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   AccountInfo, AppInfo, BackupInfo, BackupSettings, BackupStatus, DesktopEntry, LogContent, LogKind, LogList, NewsFeed, ProbeResult, ServerList, ServerStatus, SpaceCheck, GameVersion, HookCheck, HookOutcome, HookStatus, HostSettings, HostStatus, InstallOutcome, InstallRequest, InstallStatus,
   AddedMod, CacheStatus, ModIndex, ModsView, Pruned, SyncPlan, LogoutResult, PlayState, ProfileView, ServerInfo, ServerRelease, Settings, SetupRequest,
-  SetupResult, SteamLogin, VerifyReport,
+  SetupResult, SteamLogin, VerifyReport, ServerUpdateCheck, UpdateOutcome,
 } from './types';
 
 /** An error from the backend: always carries a readable message. */
@@ -124,4 +124,8 @@ export const ipc = {
   hostLogTail: (lines: number) => call<string[]>('host_log_tail', { lines }),
   hostOpenGuide: () => call<void>('host_open_guide'),
   hostSetAutostart: (on: boolean) => call<HostSettings>('host_set_autostart', { on }),
+  /** Is there a newer server release than the installed one? Quiet: a failed lookup is in `error`. */
+  hostUpdateCheck: () => call<ServerUpdateCheck>('host_update_check'),
+  /** Stop (if running), back up the database, install the new package, keep the config, start again; the old server is put back on a failure. */
+  hostUpdateApply: () => call<UpdateOutcome>('host_update_apply'),
 };

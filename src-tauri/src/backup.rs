@@ -7,7 +7,7 @@
 //! (kind `pre-restore`), so a restore can be undone.
 //!
 //! Kinds: `manual` (the button), `auto` (before a server start, if switched on; only these are
-//! pruned to the last N), `pre-restore`.
+//! pruned to the last N), `pre-restore`, `pre-update` (before a server update, host_update.rs).
 
 use std::{
     path::{Path, PathBuf},
@@ -142,6 +142,8 @@ fn kind_of(name: &str) -> &'static str {
         "auto"
     } else if stem.ends_with("-pre-restore") {
         "pre-restore"
+    } else if stem.ends_with("-pre-update") {
+        "pre-update"
     } else {
         "other"
     }
@@ -246,7 +248,7 @@ pub fn create(
     allow_copy: bool,
 ) -> Result<BackupInfo> {
     ensure!(
-        matches!(kind, "manual" | "auto" | "pre-restore"),
+        matches!(kind, "manual" | "auto" | "pre-restore" | "pre-update"),
         "unknown backup kind {kind}"
     );
     ensure!(
@@ -380,6 +382,7 @@ mod tests {
         assert!(!valid_backup_name("server-1-manual.sqlite.part"));
         assert_eq!(kind_of("server-1-auto.sqlite"), "auto");
         assert_eq!(kind_of("server-1-pre-restore.sqlite"), "pre-restore");
+        assert_eq!(kind_of("server-1-pre-update.sqlite"), "pre-update");
         assert_eq!(kind_of("server-1-2.sqlite"), "other");
         assert_eq!(kind_of("server-20261022-134501-auto-2.sqlite"), "auto");
         assert_eq!(

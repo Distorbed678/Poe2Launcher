@@ -1,8 +1,8 @@
 //! The per-version install description, `versions/<version>.toml` (embedded at build time).
 //!
-//! The files are byte-identical copies of the main repository's `versions/<version>.toml`
-//! (Poe2ModdingProject), the single definition of a supported build; `cargo xtask versions`
-//! there refreshes and checks them. This launcher reads the depots, the `[exe]` section and
+//! The files are byte-identical copies of `versions/<version>.toml` of Poe2Protocol (the hub's
+//! `modules/protocol/versions/`), the single definition of a supported build; `cargo xtask
+//! versions` in the hub (Poe2ModdingProject) refreshes and checks them. This launcher reads the depots, the `[exe]` section and
 //! `[verify]`; the other sections (protocol, signatures, client hashes, data checks) are for
 //! the server and `cargo xtask check-build` and are ignored here. `build.rs` embeds every
 //! file, newest `build_revision` last.

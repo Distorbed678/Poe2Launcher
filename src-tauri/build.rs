@@ -1,5 +1,5 @@
-//! Embeds every version file in `../versions/` (the copies of the main repository's
-//! `versions/<version>.toml`, kept by `cargo xtask versions`; docs/guides/new-game-version.md)
+//! Embeds every version file in `../versions/` (the copies of Poe2Protocol's
+//! `versions/<version>.toml`, kept by `cargo xtask versions` in the hub; docs/guides/new-game-version.md)
 //! into `EMBEDDED_VERSIONS`, oldest first by `build_revision`, so adding a build is adding a
 //! file. `depotdownloader.toml` and anything else without a `build_revision` is skipped.
 

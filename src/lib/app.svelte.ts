@@ -10,7 +10,8 @@ import { RateTracker } from './rate.svelte';
 import { installBytesDone, installBytesTotal } from './transfer';
 import { compatBlocker, isOfficial, serverCompat, versionLabel, type Compat } from './gameversion';
 import { needsDialog, syncBlocker } from './mods';
-import type { NewsFeed, AppInfo, GameVersion, HookCheck, HookStatus, InstallStatus, PlayState, ProfileView, ServerInfo, Settings, SpaceCheck, SyncPlan } from './types';
+import { updateCheckDue } from './host';
+import type { NewsFeed, ServerUpdateCheck, AppInfo, GameVersion, HookCheck, HookStatus, InstallStatus, PlayState, ProfileView, ServerInfo, Settings, SpaceCheck, SyncPlan } from './types';
 
 class AppState {
   info = $state<AppInfo | null>(null);
@@ -32,6 +33,10 @@ class AppState {
   /** Project news for Home (loaded once per start, and when the user presses refresh). */
   news = $state<NewsFeed | null>(null);
   newsLoading = $state(false);
+  /** Is a newer server release on offer for the installed hosted server? Quiet; null until asked. */
+  serverUpdate = $state<ServerUpdateCheck | null>(null);
+  serverUpdateLoading = false;
+  private serverUpdateLast: { at: number; game: string } | null = null;
   /** The disk-space check shown before and during an install. */
   space = $state<SpaceCheck | null>(null);
 
@@ -93,6 +98,8 @@ class AppState {
     void this.refreshRoles();
     void this.checkServers();
     void this.loadNews();
+    // A newer server release for the hosted server: quiet, once at start (and on Host / Home).
+    void this.checkServerUpdate();
     // A newer hook release: look once at start, quietly.
     if (this.hook?.installed) void this.checkHook(true);
     // Launcher self-update: look once at start; a failure is a quiet state, never a toast.
@@ -131,6 +138,32 @@ class AppState {
       /* keep what is shown */
     }
     this.newsLoading = false;
+  }
+
+  /**
+   * Looks for a newer server release (the hosted server's installed package against GitHub).
+   * Quiet and throttled: at start, and each time Host or Home opens, but GitHub is asked at
+   * most every 10 minutes per game version unless `force` (a failure is in `serverUpdate.error`).
+   */
+  async checkServerUpdate(force = false): Promise<void> {
+    if (this.official || this.serverUpdateLoading) return;
+    const now = Math.floor(Date.now() / 1000);
+    if (!updateCheckDue(this.serverUpdateLast, this.version, now, force)) return;
+    this.serverUpdateLoading = true;
+    const game = this.version;
+    try {
+      this.serverUpdate = await ipc.hostUpdateCheck();
+      this.serverUpdateLast = { at: now, game };
+    } catch {
+      /* quiet: keep what is shown */
+    }
+    this.serverUpdateLoading = false;
+  }
+
+  /** The installed server changed (installed, updated): the old answer no longer holds. */
+  forgetServerUpdate(): void {
+    this.serverUpdate = null;
+    this.serverUpdateLast = null;
   }
 
   async refreshInfo(): Promise<void> {
@@ -339,12 +372,14 @@ class AppState {
       if (list) {
         this.hookCheck = null;
         this.hookError = '';
+        this.forgetServerUpdate();
         await Promise.all([this.refreshSettings(), this.refreshStatus(), this.refreshInfo(), this.refreshHook()]);
         if (this.hook?.installed) void this.checkHook(true);
         // A fresh install log and verification belong to the other version.
         this.install = initialInstall();
         toasts.show('ok', `Game version: ${versionLabel(version)}`);
         void this.checkServers();
+        void this.checkServerUpdate();
       }
     } finally {
       this.switching = false;

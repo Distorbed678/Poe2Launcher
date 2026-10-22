@@ -19,6 +19,7 @@ use crate::{
     hook_ops::{HookCheck, HookOutcome, HookStatus},
     host::{HostSettings, ServerRelease},
     host_ops::{HostStatus, InstallOutcome, SetupRequest, SetupResult},
+    host_update::{ServerUpdateCheck, UpdateOutcome},
     logs::{LogContent, LogList},
     mod_ops::{CacheStatus, ModsView, Pruned},
     modcache::Added,
@@ -426,6 +427,20 @@ pub fn host_log_tail(app: App<'_>, lines: usize) -> Vec<String> {
 #[tauri::command]
 pub fn host_set_autostart(app: App<'_>, on: bool) -> Res<HostSettings> {
     app.host_set_autostart(on).map_err(err)
+}
+
+/// Whether a newer server release than the installed one exists. Quiet: a failed lookup is in
+/// the answer's `error`, never an error.
+#[tauri::command]
+pub async fn host_update_check(app: App<'_>) -> Res<ServerUpdateCheck> {
+    Ok(app.host_update_check().await)
+}
+
+/// The one-click server update: stop, back up, install, keep the config, start again; on a
+/// failure the old server is put back.
+#[tauri::command]
+pub async fn host_update_apply(app: App<'_>) -> Res<UpdateOutcome> {
+    app.host_update_apply().await.map_err(err)
 }
 
 /// Opens the hosting guide (a fixed address) in the system browser.
