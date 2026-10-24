@@ -4,6 +4,7 @@
 pub mod api;
 pub mod backup;
 pub mod backup_ops;
+pub mod child_env;
 pub mod commands;
 pub mod core;
 pub mod depot;

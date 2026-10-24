@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fix: Play failed from the AppImage on a new Proton prefix** ("Proton could not create the prefix ... exit status: 1"). The AppImage's environment (`PYTHONHOME`, `PYTHONPATH`, `LD_LIBRARY_PATH`, `PATH`, GTK/GIO/GStreamer module paths pointing into its mount) leaked into Proton, a Python script, which then could not start. Programs the launcher starts (Proton for the prefix and the game, the hosted server, DepotDownloader) now get the environment without the AppImage's entries.
+
 ## 0.4.0
 
 - **Server releases from Poe2Server.** *Download the latest release* on the Host page and the server news now read the releases (`server-v*`) of `Distorbed678/Poe2Server`. When that repository has no release that fits (or cannot be read) the launcher falls back to `Distorbed678/Poe2ModdingProject`, which still holds the two earliest releases. The package check accepts both layouts: the version file in `modules/protocol/versions/<game>.toml` (Poe2Server) or `versions/<game>.toml` (the old releases). The hosting guide link points to Poe2Server. `news.json` still comes from the hub repository.

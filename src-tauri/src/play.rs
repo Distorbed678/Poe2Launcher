@@ -153,6 +153,7 @@ pub async fn ensure_prefix(cfg: &PlayConfig) -> Result<()> {
     // Same environment as a game launch, a harmless program instead of the client.
     let args: Vec<_> = vec!["run".into(), "wineboot".into(), "-u".into()];
     std_cmd = rebuild_with_args(std_cmd, &args);
+    crate::child_env::clean_appimage_env(&mut std_cmd);
     let mut cmd = tokio::process::Command::from(std_cmd);
     cmd.kill_on_drop(true);
     let status = tokio::time::timeout(std::time::Duration::from_secs(300), cmd.status())
@@ -196,7 +197,8 @@ pub fn launch_command(cfg: &PlayConfig) -> Result<std::process::Command> {
         Ok(cmd)
     } else {
         let proton = proton_launch(cfg);
-        let cmd = proton.command()?;
+        let mut cmd = proton.command()?;
+        crate::child_env::clean_appimage_env(&mut cmd);
         // Pending crash dumps would be uploaded by the client's helper: set them aside first.
         let _ =
             poe_hook_deploy::launch::quarantine_crash_dumps(&cfg.prefix_dir, &cfg.crash_dump_dir);

@@ -463,6 +463,7 @@ pub async fn run(
     }
     #[cfg(not(unix))]
     let _ = data_home;
+    crate::child_env::clean_appimage_env(cmd.as_std_mut());
     let mut child = cmd
         .spawn()
         .with_context(|| format!("starting {}", exe.display()))?;

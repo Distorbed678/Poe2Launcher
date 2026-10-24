@@ -107,6 +107,7 @@ fn spawn_child(spec: &StartSpec) -> Result<tokio::process::Child> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    crate::child_env::clean_appimage_env(cmd.as_std_mut());
     #[cfg(windows)]
     {
         // No console window for the server.
@@ -416,8 +417,8 @@ pub async fn run_oneshot_stdin(
 ) -> Result<String> {
     use tokio::io::AsyncWriteExt;
 
-    let mut child = Command::new(exe)
-        .args(args)
+    let mut cmd = Command::new(exe);
+    cmd.args(args)
         .current_dir(cwd)
         .env("POE_CONFIG", config)
         .env("NO_COLOR", "1")
@@ -428,7 +429,9 @@ pub async fn run_oneshot_stdin(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    crate::child_env::clean_appimage_env(cmd.as_std_mut());
+    let mut child = cmd
         .spawn()
         .with_context(|| format!("running {}", exe.display()))?;
     if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
