@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1
 
 - **Fix: Play failed from the AppImage on a new Proton prefix** ("Proton could not create the prefix ... exit status: 1"). The AppImage's environment (`PYTHONHOME`, `PYTHONPATH`, `LD_LIBRARY_PATH`, `PATH`, GTK/GIO/GStreamer module paths pointing into its mount) leaked into Proton, a Python script, which then could not start. Programs the launcher starts (Proton for the prefix and the game, the hosted server, DepotDownloader) now get the environment without the AppImage's entries.
 
