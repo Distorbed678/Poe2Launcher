@@ -598,7 +598,8 @@ mod tests {
 
     fn job(remember: bool, code: bool, validate: bool) -> DownloadJob {
         DownloadJob {
-            version: VersionFile::latest().unwrap(),
+            // The manifests asserted below are 0.5.5e's.
+            version: VersionFile::embedded("0.5.5e").unwrap(),
             dir: PathBuf::from("/games/poe2"),
             username: "steamuser".into(),
             remember_password: remember,

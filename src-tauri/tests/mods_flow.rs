@@ -153,6 +153,8 @@ fn env() -> Env {
         events.clone(),
     )
     .unwrap();
+    // The fixture mods and realms are made for 0.5.5e (not necessarily the newest version).
+    core.set_game_version("0.5.5e").unwrap();
     Env { tmp, core }
 }
 
