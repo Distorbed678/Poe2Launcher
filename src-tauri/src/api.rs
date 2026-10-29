@@ -161,6 +161,11 @@ impl ApiClient {
         decode(self.http.get(self.url("/server")).send().await).await
     }
 
+    /// `GET <path>` without a token, decoded as `T` (e.g. `/local/metrics`).
+    pub async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
+        decode(self.http.get(self.url(path)).send().await).await
+    }
+
     /// `GET /server` and how long the whole request took (connect, TLS and answer).
     pub async fn server_status(&self) -> Result<ServerStatus, ApiError> {
         let t = std::time::Instant::now();

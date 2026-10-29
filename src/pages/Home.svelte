@@ -35,7 +35,7 @@
   });
   onMount(() => {
     // A newer server release for the server you host: quiet, not more than every 10 minutes.
-    void app.checkServerUpdate();
+    void app.checkServerUpdates();
     timer = setInterval(check, 30_000);
   });
   onDestroy(() => timer && clearInterval(timer));
@@ -77,7 +77,7 @@
   <SetupChecklist />
 
   {#if updateText && app.serverUpdate?.release}
-    <a class="play-note" href="#/servers?host=1"><Icon name="download" size={14} /> {updateText} <span class="go">Open your server</span></a>
+    <a class="play-note" href="#/servers?tab=host"><Icon name="download" size={14} /> {updateText} <span class="go">Open your server</span></a>
   {/if}
 
   <div class="play-center">

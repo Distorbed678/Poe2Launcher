@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  AccountInfo, AppInfo, BackupInfo, BackupSettings, BackupStatus, DesktopEntry, LogContent, LogKind, LogList, NewsFeed, ProbeResult, ServerList, ServerStatus, SpaceCheck, GameVersion, HookCheck, HookOutcome, HookStatus, HostSettings, HostStatus, InstallOutcome, InstallRequest, InstallStatus,
+  AppInfo, BackupInfo, BackupSettings, BackupStatus, DesktopEntry, LogContent, LogKind, LogList, NewsFeed, ProbeResult, ServerList, ServerStatus, SpaceCheck, GameVersion, HookCheck, HookOutcome, HookStatus, HostMetrics, HostSettings, HostStatus, InstallOutcome, InstallRequest, InstallStatus,
   AddedMod, CacheStatus, ModIndex, ModsView, Pruned, SyncPlan, LogoutResult, PlayState, ProfileView, ServerInfo, ServerRelease, Settings, SetupRequest,
   SetupResult, SteamLogin, VerifyReport, ServerUpdateCheck, UpdateOutcome,
 } from './types';
@@ -43,6 +43,8 @@ export const ipc = {
   accountRefresh: (id: string) => call<ProfileView>('account_refresh', { id }),
   /** Admin only: opens the server's web admin in the system browser, already signed in. */
   webAdminOpen: (id: string) => call<void>('web_admin_open', { id }),
+  registerPageOpen: (id: string) => call<void>('register_page_open', { id }),
+  hostWebAdminOpen: (id: string) => call<void>('host_web_admin_open', { id }),
   serverInfo: (id: string) => call<ServerInfo>('server_info', { id }),
   /** `GET /server` plus the round-trip time measured by the launcher. */
   serverStatus: (id: string) => call<ServerStatus>('server_status', { id }),
@@ -59,13 +61,12 @@ export const ipc = {
   /** The redacted text for a bug report (system information + the end of one log). */
   logReport: (id: string | null, lines = 200) => call<string>('log_report', { id, lines }),
   logOpenFolder: (kind: LogKind) => call<void>('log_open_folder', { kind }),
-  backupStatus: () => call<BackupStatus>('backup_status'),
-  backupCreate: () => call<BackupInfo>('backup_create'),
-  backupRestore: (name: string) => call<BackupInfo | null>('backup_restore', { name }),
-  backupDelete: (name: string) => call<void>('backup_delete', { name }),
-  backupSetSettings: (auto: boolean, keep: number) => call<BackupSettings>('backup_set_settings', { auto, keep }),
+  backupStatus: (id: string) => call<BackupStatus>('backup_status', { id }),
+  backupCreate: (id: string) => call<BackupInfo>('backup_create', { id }),
+  backupRestore: (id: string, name: string) => call<BackupInfo | null>('backup_restore', { id, name }),
+  backupDelete: (id: string, name: string) => call<void>('backup_delete', { id, name }),
+  backupSetSettings: (id: string, auto: boolean, keep: number) => call<BackupSettings>('backup_set_settings', { id, auto, keep }),
   login: (id: string, username: string, password: string) => call<ProfileView>('account_login', { id, username, password }),
-  register: (id: string, username: string, password: string) => call<AccountInfo>('account_register', { id, username, password }),
   logout: (id: string) => call<LogoutResult>('account_logout', { id }),
   settings: () => call<Settings>('settings_get'),
   setSettings: (settings: Settings) => call<Settings>('settings_set', { settings }),
@@ -112,20 +113,24 @@ export const ipc = {
   /** Asks GitHub for the newest hook release for the selected game version. */
   hookCheck: () => call<HookCheck>('hook_check'),
   hookInstallLatest: () => call<HookOutcome>('hook_install_latest'),
-  hostStatus: () => call<HostStatus>('host_status'),
+  hostList: () => call<HostStatus[]>('host_list'),
+  hostStatus: (id: string) => call<HostStatus>('host_status', { id }),
+  hostCreate: (name: string) => call<string>('host_create', { name }),
+  hostDelete: (id: string) => call<void>('host_delete', { id }),
+  hostMetrics: (id: string) => call<HostMetrics>('host_metrics', { id }),
   hostFindRelease: () => call<ServerRelease>('host_find_release'),
-  hostInstallLatest: () => call<InstallOutcome>('host_install_latest'),
-  hostInstallLocal: (path: string) => call<InstallOutcome>('host_install_local', { path }),
+  hostInstallLatest: (id: string) => call<InstallOutcome>('host_install_latest', { id }),
+  hostInstallLocal: (id: string, path: string) => call<InstallOutcome>('host_install_local', { id, path }),
   hostLanIp: () => call<string | null>('host_lan_ip'),
   hostPublicIp: () => call<string>('host_public_ip'),
-  hostSetup: (request: SetupRequest) => call<SetupResult>('host_setup', { request }),
-  hostStart: () => call<void>('host_start'),
-  hostStop: () => call<void>('host_stop'),
-  hostLogTail: (lines: number) => call<string[]>('host_log_tail', { lines }),
+  hostSetup: (id: string, request: SetupRequest) => call<SetupResult>('host_setup', { id, request }),
+  hostStart: (id: string) => call<void>('host_start', { id }),
+  hostStop: (id: string) => call<void>('host_stop', { id }),
+  hostLogTail: (id: string, lines: number) => call<string[]>('host_log_tail', { id, lines }),
   hostOpenGuide: () => call<void>('host_open_guide'),
-  hostSetAutostart: (on: boolean) => call<HostSettings>('host_set_autostart', { on }),
+  hostSetAutostart: (id: string, on: boolean) => call<HostSettings>('host_set_autostart', { id, on }),
   /** Is there a newer server release than the installed one? Quiet: a failed lookup is in `error`. */
-  hostUpdateCheck: () => call<ServerUpdateCheck>('host_update_check'),
+  hostUpdateCheck: (id: string) => call<ServerUpdateCheck>('host_update_check', { id }),
   /** Stop (if running), back up the database, install the new package, keep the config, start again; the old server is put back on a failure. */
-  hostUpdateApply: () => call<UpdateOutcome>('host_update_apply'),
+  hostUpdateApply: (id: string) => call<UpdateOutcome>('host_update_apply', { id }),
 };

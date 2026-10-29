@@ -349,7 +349,8 @@ async fn logs_are_listed_read_by_id_and_reported_without_private_data() {
     let data = e.tmp.path().join("data");
     std::fs::create_dir_all(data.join("logs")).unwrap();
     std::fs::create_dir_all(data.join("crash-dumps")).unwrap();
-    std::fs::create_dir_all(data.join("server")).unwrap();
+    let sid = e.core.host_create("Logs").unwrap();
+    std::fs::create_dir_all(data.join("servers").join(&sid)).unwrap();
     let home = dirs::home_dir().unwrap().display().to_string();
     let secret = "ab12".repeat(16);
     std::fs::write(
@@ -360,13 +361,13 @@ async fn logs_are_listed_read_by_id_and_reported_without_private_data() {
     )
     .unwrap();
     std::fs::write(data.join("logs/notes.txt"), "not a game log").unwrap();
-    std::fs::write(data.join("server/server.log"), "server up\n").unwrap();
+    std::fs::write(data.join("servers").join(&sid).join("server.log"), "server up\n").unwrap();
     std::fs::write(data.join("crash-dumps/crash1.dmp"), [b'M', b'D', 0, 0]).unwrap();
 
     let list = e.core.log_list();
     let ids: Vec<_> = list.files.iter().map(|f| f.id.as_str()).collect();
     assert!(ids.contains(&"game:game-1761000000.log"));
-    assert!(ids.contains(&"server:server.log"));
+    assert!(ids.contains(&format!("server:{sid}/server.log").as_str()), "{ids:?}");
     assert!(ids.contains(&"crash:crash1.dmp"));
     assert!(
         !ids.iter().any(|i| i.contains("notes.txt")),
@@ -434,17 +435,19 @@ fn names(path: &std::path::Path) -> Vec<String> {
 #[test]
 fn backups_through_the_core() {
     let e = env();
-    let db = e.tmp.path().join("data/server/data/server.sqlite");
+    let id = e.core.host_create("Backups").unwrap();
+    let id = id.as_str();
+    let db = e.tmp.path().join("data/servers/s1/data/server.sqlite");
     // No database yet: a clear message, an empty list.
-    assert!(e.core.backup_status().unwrap().backups.is_empty());
-    assert!(e.core.backup_status().unwrap().database_size.is_none());
-    assert!(format!("{:#}", e.core.backup_create().unwrap_err()).contains("no database yet"));
+    assert!(e.core.backup_status(id).unwrap().backups.is_empty());
+    assert!(e.core.backup_status(id).unwrap().database_size.is_none());
+    assert!(format!("{:#}", e.core.backup_create(id).unwrap_err()).contains("no database yet"));
 
     make_db(&db, &["admin", "alice"]);
-    let st = e.core.backup_status().unwrap();
+    let st = e.core.backup_status(id).unwrap();
     assert!(st.database_size.is_some() && !st.server_running);
-    assert!(st.dir.ends_with("server/backups"));
-    let b = e.core.backup_create().unwrap();
+    assert!(st.dir.ends_with("servers/s1/backups"));
+    let b = e.core.backup_create(id).unwrap();
     assert_eq!(b.kind, "manual");
     assert_eq!(names(&st.dir.join(&b.name)), ["admin", "alice"]);
 
@@ -456,33 +459,33 @@ fn backups_through_the_core() {
         c.execute("DELETE FROM accounts WHERE name = 'alice'", [])
             .unwrap();
     }
-    let pre = e.core.backup_restore(&b.name).unwrap().unwrap();
+    let pre = e.core.backup_restore(id, &b.name).unwrap().unwrap();
     assert_eq!(pre.kind, "pre-restore");
     assert_eq!(names(&db), ["admin", "alice"]);
     assert_eq!(names(&st.dir.join(&pre.name)), ["admin", "bob"]);
-    assert_eq!(e.core.backup_status().unwrap().backups.len(), 2);
+    assert_eq!(e.core.backup_status(id).unwrap().backups.len(), 2);
 
     // Deleting, and refusing names that are not backups.
-    assert!(e.core.backup_delete("../../server.sqlite").is_err());
-    e.core.backup_delete(&pre.name).unwrap();
-    assert_eq!(e.core.backup_status().unwrap().backups.len(), 1);
+    assert!(e.core.backup_delete(id, "../../server.sqlite").is_err());
+    e.core.backup_delete(id, &pre.name).unwrap();
+    assert_eq!(e.core.backup_status(id).unwrap().backups.len(), 1);
 
     // Automatic backups: off by default, on with a keep count, and only the autos are pruned.
-    e.core.backup_auto();
+    e.core.backup_auto(id);
     assert_eq!(
-        e.core.backup_status().unwrap().backups.len(),
+        e.core.backup_status(id).unwrap().backups.len(),
         1,
         "off by default"
     );
-    assert!(e.core.backup_set_settings(true, 0).is_err());
-    let s = e.core.backup_set_settings(true, 2).unwrap();
+    assert!(e.core.backup_set_settings(id, true, 0).is_err());
+    let s = e.core.backup_set_settings(id, true, 2).unwrap();
     assert!(s.auto && s.keep == 2);
-    assert_eq!(e.core.backup_settings().unwrap(), s);
+    assert_eq!(e.core.backup_settings(id).unwrap(), s);
     for _ in 0..4 {
-        e.core.backup_auto();
+        e.core.backup_auto(id);
         std::thread::sleep(Duration::from_millis(1100)); // names carry the second
     }
-    let l = e.core.backup_status().unwrap().backups;
+    let l = e.core.backup_status(id).unwrap().backups;
     assert_eq!(l.iter().filter(|b| b.kind == "auto").count(), 2);
     assert_eq!(
         l.iter().filter(|b| b.kind == "manual").count(),

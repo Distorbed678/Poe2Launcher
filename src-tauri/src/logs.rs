@@ -327,30 +327,30 @@ impl Redactor {
 // Core
 
 impl Core {
+    /// The folder of the hosted servers' folders (`<id>/server.log` each).
     fn server_log_dir(&self) -> PathBuf {
-        self.host_dirs()
-            .log_file()
-            .parent()
-            .map_or_else(|| self.dirs.data.join("server"), Path::to_path_buf)
+        self.dirs.data.join("servers")
     }
 
     pub fn log_list(&self) -> LogList {
         let mut files = files_in(&self.dirs.logs_dir(), "game", |n| {
             n.starts_with("game-") && n.ends_with(".log")
         });
-        let server = self.host_dirs().log_file();
-        if let Ok(meta) = std::fs::metadata(&server)
-            && meta.is_file()
-            && let Some(name) = server.file_name().and_then(|n| n.to_str())
-        {
-            files.push(LogFile {
-                id: format!("server:{name}"),
-                kind: "server".into(),
-                name: name.to_owned(),
-                size: meta.len(),
-                modified: mtime(&meta),
-                text: true,
-            });
+        for sid in self.host_ids() {
+            let server = self.host_dirs(&sid).log_file();
+            if let Ok(meta) = std::fs::metadata(&server)
+                && meta.is_file()
+            {
+                let name = format!("{sid}/server.log");
+                files.push(LogFile {
+                    id: format!("server:{name}"),
+                    kind: "server".into(),
+                    name,
+                    size: meta.len(),
+                    modified: mtime(&meta),
+                    text: true,
+                });
+            }
         }
         files.extend(files_in(&self.dirs.crash_dump_dir(), "crash", |_| true));
         LogList {
@@ -416,9 +416,6 @@ impl Core {
         if let Ok(s) = self.settings() {
             names.push(s.steam_username);
         }
-        if let Ok(h) = self.host_settings() {
-            names.push(h.admin_name);
-        }
         names.retain(|n| n.trim().chars().count() >= 3);
         names.sort();
         names.dedup();
@@ -467,18 +464,20 @@ impl Core {
     }
 
     fn host_status_blocking_info(&self) -> Option<String> {
-        let s = self.host_settings().ok()?;
-        s.package_dir.as_ref()?;
-        let p = crate::host::inspect_package(
-            s.package_dir.as_ref()?,
-            &self.version().version,
-            std::env::consts::OS,
-        )
-        .ok()?;
-        Some(format!(
-            "{} (server {}, game {})",
-            p.name, p.server_version, p.game_version
-        ))
+        let mut out = Vec::new();
+        for sid in self.host_ids() {
+            let Ok(s) = self.host_settings(&sid) else { continue };
+            let Some(dir) = s.package_dir.as_ref() else { continue };
+            if let Ok(p) =
+                crate::host::inspect_package(dir, &self.version().version, std::env::consts::OS)
+            {
+                out.push(format!(
+                    "{sid}: {} (server {}, game {})",
+                    p.name, p.server_version, p.game_version
+                ));
+            }
+        }
+        (!out.is_empty()).then(|| out.join("; "))
     }
 
     /// The text for "Copy for a bug report": system information, then the last `lines` lines of

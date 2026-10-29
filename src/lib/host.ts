@@ -1,6 +1,6 @@
 import type { HostSettings, RunState, ServerUpdateCheck } from './types';
 
-/** What the setup wizard edits (the admin password never leaves this object and the page). */
+/** What the server's Settings tab edits. */
 export interface HostForm {
   server_name: string;
   cluster_id: string;
@@ -10,9 +10,6 @@ export interface HostForm {
   public_host: string;
   web_public: boolean;
   open_registration: boolean;
-  admin_name: string;
-  admin_password: string;
-  admin_password2: string;
 }
 
 export function formFromSettings(s: HostSettings, lanIp: string | null): HostForm {
@@ -26,9 +23,6 @@ export function formFromSettings(s: HostSettings, lanIp: string | null): HostFor
     public_host: !s.configured && s.public_host === '127.0.0.1' && lanIp ? lanIp : s.public_host,
     web_public: s.web_public,
     open_registration: s.open_registration,
-    admin_name: s.admin_name,
-    admin_password: '',
-    admin_password2: '',
   };
 }
 
@@ -43,11 +37,9 @@ export function settingsFromForm(base: HostSettings, f: HostForm): HostSettings 
     public_host: f.public_host.trim(),
     web_public: f.web_public,
     open_registration: f.open_registration,
-    admin_name: f.admin_name.trim(),
   };
 }
 
-const ACCOUNT_NAME = /^[A-Za-z0-9_.@+-]{3,64}$/;
 const CLUSTER_ID = /^[a-z0-9_-]{1,32}$/;
 
 /** An IP address or a plain host name (mirrors `valid_public_host`). */
@@ -59,7 +51,7 @@ export function validPublicHost(host: string): boolean {
 }
 
 /** Problems with the form (mirrors `HostSettings::validate`; the backend checks again). */
-export function validateHostForm(f: HostForm, needPassword: boolean): string[] {
+export function validateHostForm(f: HostForm): string[] {
   const out: string[] = [];
   const name = f.server_name.trim();
   if (!name || name.length > 64) out.push('The server name is 1-64 characters.');
@@ -74,14 +66,6 @@ export function validateHostForm(f: HostForm, needPassword: boolean): string[] {
   }
   if (new Set(ports.map(([, p]) => p)).size !== 3) out.push('The login, instance and web ports must be three different numbers.');
   if (!validPublicHost(f.public_host)) out.push('The public host is an IP address or a host name, without http:// or a port.');
-  if (needPassword || f.admin_name.trim()) {
-    if (!ACCOUNT_NAME.test(f.admin_name.trim())) out.push('The admin account name is 3-64 characters: letters, digits and _ . @ + -');
-  }
-  if (needPassword || f.admin_password) {
-    if (f.admin_password.length < 8) out.push('The admin password needs at least 8 characters.');
-    else if (f.admin_password.length > 256) out.push('The admin password is at most 256 characters.');
-    else if (f.admin_password !== f.admin_password2) out.push('The two passwords differ.');
-  }
   return out;
 }
 

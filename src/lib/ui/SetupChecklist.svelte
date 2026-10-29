@@ -14,6 +14,12 @@
   const now = $derived(currentStep(steps));
   const show = $derived(setupNeeded(steps));
   const installingHook = $derived(app.hookTask === 'install');
+
+  let chooser: HTMLDialogElement | undefined = $state();
+  function choose(href: string) {
+    chooser?.close();
+    location.hash = href;
+  }
 </script>
 
 {#if show}
@@ -42,10 +48,7 @@
                 {#if installingHook}<Spinner size={14} /> Downloading{:else}<Icon name="download" size={14} /> Download{/if}
               </button>
             {:else}
-              <a class="btn" class:primary={s.id === now} href="#/servers?host=1"><Icon name="host" size={14} /> Create a server</a>
-              <span class="hint">or</span>
-              <a class="btn" href="#/servers?tab=browse"><Icon name="compass" size={14} /> Find a server</a>
-              <a class="btn" href="#/servers"><Icon name="plus" size={14} /> Add by address</a>
+              <button type="button" class="btn" class:primary={s.id === now} onclick={() => chooser?.showModal()}><Icon name="servers" size={14} /> Set up a server</button>
             {/if}
           </div>
         </li>
@@ -53,6 +56,31 @@
     </ol>
     {#if app.hookError}<div class="notice danger" style="margin-top: 10px"><span class="notice-title"><Icon name="alert" size={16} /> Client hook</span><p>{app.hookError}</p></div>{/if}
   </section>
+
+  <dialog bind:this={chooser} class="modal" aria-labelledby="chooser-title">
+    <div class="dialog-body">
+      <div class="dialog-head"><h2 id="chooser-title">Set up a server</h2></div>
+      <p class="muted">Pick one. You can add more later on the Servers page.</p>
+      <div class="choices">
+        <button type="button" class="choice" onclick={() => choose('#/servers?tab=host&create=1')}>
+          <span class="choice-icon"><Icon name="host" size={18} /></span>
+          <span class="grow"><b>Host on this computer</b><small>Run your own server; friends join with its address.</small></span>
+          <span class="btn sm primary">Create</span>
+        </button>
+        <button type="button" class="choice" onclick={() => choose('#/servers?tab=browse')}>
+          <span class="choice-icon"><Icon name="compass" size={18} /></span>
+          <span class="grow"><b>Browse public servers</b><small>Servers that list themselves publicly.</small></span>
+          <span class="btn sm">Browse</span>
+        </button>
+        <button type="button" class="choice" onclick={() => choose('#/servers?add=1')}>
+          <span class="choice-icon"><Icon name="plus" size={18} /></span>
+          <span class="grow"><b>Add by address</b><small>A friend's server: its web address, e.g. 192.168.1.20:8080.</small></span>
+          <span class="btn sm">Add</span>
+        </button>
+      </div>
+      <div class="actions"><button type="button" class="btn ghost" onclick={() => chooser?.close()}>Cancel</button></div>
+    </div>
+  </dialog>
 {/if}
 
 <style>
@@ -66,4 +94,10 @@
   li.done .mark { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
   .step-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
   a.btn { text-decoration: none; }
+  .choices { display: grid; gap: var(--sp-3); margin: var(--sp-3) 0 var(--sp-2); }
+  .choice { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-2); color: var(--text); text-align: left; cursor: pointer; font: inherit; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
+  .choice:hover, .choice:focus-visible { border-color: color-mix(in srgb, var(--gold) 55%, var(--line)); background: color-mix(in srgb, var(--crimson) 14%, var(--bg-2)); }
+  .choice b { display: block; font-weight: 600; }
+  .choice small { color: var(--muted); font-size: var(--fs-sm); }
+  .choice-icon { flex: none; width: 38px; height: 38px; border-radius: var(--radius-lg); background: var(--surface-3); display: grid; place-items: center; color: var(--gold-2); }
 </style>

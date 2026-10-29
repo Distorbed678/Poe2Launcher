@@ -210,6 +210,8 @@ struct Env {
     tmp: tempfile::TempDir,
     core: Arc<Core>,
     events: Arc<Collector>,
+    /// The hosted server every test works on (made by `env`).
+    id: String,
 }
 
 fn env() -> Env {
@@ -223,7 +225,13 @@ fn env() -> Env {
     .unwrap();
     // The mock releases are for the oldest supported game version (a newer one may be added).
     core.set_game_version(&oldest_version()).unwrap();
-    Env { tmp, core, events }
+    let id = core.host_create("Test").unwrap();
+    Env {
+        tmp,
+        core,
+        events,
+        id,
+    }
 }
 
 /// Only meaningful on Unix: the fake `poe-server` of the package is a shell script, and the
@@ -242,7 +250,7 @@ mod fake {
             (r.version.as_str(), r.game_version.as_str()),
             ("0.1.0", GAME)
         );
-        let out = e.core.host_install_latest_from(&api).await.unwrap();
+        let out = e.core.host_install_latest_from(&e.id, &api).await.unwrap();
         assert!(out.checksum_verified);
         assert_eq!(out.sha256.as_deref(), Some(sha256(&archive).as_str()));
         assert_eq!(out.package.server_version, "0.1.0");
@@ -253,7 +261,7 @@ mod fake {
             std::fs::metadata(&exe).unwrap().permissions().mode() & 0o111,
             0o111
         );
-        let settings = e.core.host_settings().unwrap();
+        let settings = e.core.host_settings(&e.id).unwrap();
         assert_eq!(
             settings.package_dir.as_deref(),
             Some(out.package.dir.as_path())
@@ -270,9 +278,9 @@ mod fake {
                 .any(|(n, v)| n == "host:progress" && v["done"].as_u64().unwrap_or(0) > 0)
         );
         // And again: a second install replaces the first, no leftovers.
-        let again = e.core.host_install_latest_from(&api).await.unwrap();
+        let again = e.core.host_install_latest_from(&e.id, &api).await.unwrap();
         assert_eq!(again.source, "current", "nothing newer: nothing downloaded");
-        let st = e.core.host_status().await.unwrap();
+        let st = e.core.host_status(&e.id).await.unwrap();
         assert_eq!(st.package.unwrap().name, pkg_name("0.1.0"));
         assert!(st.package_problem.is_none());
         assert_eq!(
@@ -290,17 +298,17 @@ mod fake {
         let e = env();
         let err = e
             .core
-            .host_install_latest_from(&api)
+            .host_install_latest_from(&e.id, &api)
             .await
             .unwrap_err()
             .to_string();
         assert!(err.contains("does not match its checksum"), "{err}");
-        assert!(e.core.host_settings().unwrap().package_dir.is_none());
+        assert!(e.core.host_settings(&e.id).unwrap().package_dir.is_none());
         let dir = e.tmp.path().join("data/server");
         let leftovers = walk(&dir);
         assert!(leftovers.is_empty(), "{leftovers:?}");
         // A task that failed does not block the next one.
-        assert!(!e.core.host_status().await.unwrap().busy);
+        assert!(!e.core.host_status(&e.id).await.unwrap().busy);
     }
 
     fn walk(dir: &Path) -> Vec<PathBuf> {
@@ -371,7 +379,7 @@ mod fake {
         // No checksum file: installed, but reported as not verified.
         let out = e
             .core
-            .host_install_local(archive.to_str().unwrap())
+            .host_install_local(&e.id, archive.to_str().unwrap())
             .await
             .unwrap();
         assert!(!out.checksum_verified && out.sha256.is_some());
@@ -384,7 +392,7 @@ mod fake {
         .unwrap();
         let out = e
             .core
-            .host_install_local(archive.to_str().unwrap())
+            .host_install_local(&e.id, archive.to_str().unwrap())
             .await
             .unwrap();
         assert!(out.checksum_verified);
@@ -397,7 +405,7 @@ mod fake {
         .unwrap();
         let err = e
             .core
-            .host_install_local(archive.to_str().unwrap())
+            .host_install_local(&e.id, archive.to_str().unwrap())
             .await
             .unwrap_err()
             .to_string();
@@ -409,7 +417,7 @@ mod fake {
         ar.unpack(folder.path()).unwrap();
         let out = e
             .core
-            .host_install_local(folder.path().join(pkg_name("0.1.0")).to_str().unwrap())
+            .host_install_local(&e.id, folder.path().join(pkg_name("0.1.0")).to_str().unwrap())
             .await
             .unwrap();
         assert_eq!(out.source, "folder");
@@ -423,13 +431,13 @@ mod fake {
         std::fs::write(&junk, b"not a tarball").unwrap();
         assert!(
             e.core
-                .host_install_local(junk.to_str().unwrap())
+                .host_install_local(&e.id, junk.to_str().unwrap())
                 .await
                 .is_err()
         );
         assert!(
             e.core
-                .host_install_local("/nonexistent/x.tar.gz")
+                .host_install_local(&e.id, "/nonexistent/x.tar.gz")
                 .await
                 .is_err()
         );
@@ -443,12 +451,12 @@ mod fake {
         std::fs::write(&archive, fake_package("0.1.0", "0.6.0", &[])).unwrap();
         let err = e
             .core
-            .host_install_local(archive.to_str().unwrap())
+            .host_install_local(&e.id, archive.to_str().unwrap())
             .await
             .unwrap_err()
             .to_string();
         assert!(err.contains("0.6.0") && err.contains(GAME), "{err}");
-        assert!(e.core.host_settings().unwrap().package_dir.is_none());
+        assert!(e.core.host_settings(&e.id).unwrap().package_dir.is_none());
     }
 
     #[tokio::test]
@@ -466,7 +474,7 @@ mod fake {
             std::fs::write(&archive, fake_package("0.1.0", GAME, &[extra])).unwrap();
             let err = e
                 .core
-                .host_install_local(archive.to_str().unwrap())
+                .host_install_local(&e.id, archive.to_str().unwrap())
                 .await
                 .unwrap_err()
                 .to_string();
@@ -477,7 +485,7 @@ mod fake {
         }
         assert!(!e.tmp.path().join("escaped.txt").exists());
         assert!(!e.tmp.path().parent().unwrap().join("escaped.txt").exists());
-        assert!(e.core.host_settings().unwrap().package_dir.is_none());
+        assert!(e.core.host_settings(&e.id).unwrap().package_dir.is_none());
     }
 
     #[tokio::test]
@@ -487,25 +495,16 @@ mod fake {
         s.web_port = s.login_port;
         let err = e
             .core
-            .host_setup(poe2_launcher_lib::host_ops::SetupRequest {
-                settings: s,
-                admin_password: "x".into(),
-            })
+            .host_setup(&e.id, poe2_launcher_lib::host_ops::SetupRequest { settings: s })
             .await
             .unwrap_err()
             .to_string();
         assert!(err.contains("different"), "{err}");
         // Without a package there is nothing to set up.
-        let s = HostSettings {
-            admin_name: "boss".into(),
-            ..Default::default()
-        };
+        let s = HostSettings::default();
         let err = e
             .core
-            .host_setup(poe2_launcher_lib::host_ops::SetupRequest {
-                settings: s,
-                admin_password: "long-enough-pw".into(),
-            })
+            .host_setup(&e.id, poe2_launcher_lib::host_ops::SetupRequest { settings: s })
             .await
             .unwrap_err()
             .to_string();
@@ -513,19 +512,16 @@ mod fake {
         // And starting a server that was never set up says so.
         assert!(
             e.core
-                .host_start()
+                .host_start(&e.id)
                 .await
                 .unwrap_err()
                 .to_string()
-                .contains("set the server up")
+                .contains("apply the server's settings first")
         );
     }
 
-    /// The admin is made with two one-shot commands, the password on the child's standard input
-    /// and on no command line; the server is not started.
-    #[tokio::test]
-    async fn the_admin_password_goes_to_stdin_not_to_a_command_line() {
-        let e = env();
+    /// A fake game install and a package whose `poe-server` records how it was called.
+    async fn installed(e: &Env) -> PathBuf {
         let game = e.tmp.path().join("game");
         std::fs::create_dir_all(&game).unwrap();
         std::fs::write(game.join("PathOfExileSteam.exe"), b"x").unwrap();
@@ -536,128 +532,105 @@ mod fake {
                 ..Default::default()
             })
             .unwrap();
-        // Records its arguments, and the line `account create` reads; `taken` makes `create` fail
-        // the way the real server does for an existing name.
-        let body = b"#!/bin/sh\n\
-            echo \"$*\" >> calls.log\n\
-            if [ \"$1 $2\" = \"account create\" ]; then\n\
-              IFS= read -r pw; printf '%s' \"$pw\" > stdin.log\n\
-              if [ -f taken ]; then echo 'that username is taken' >&2; exit 1; fi\n\
-            fi\n\
-            exit 0\n";
+        let body = b"#!/bin/sh\necho \"$*\" >> calls.log\nexit 0\n";
         let src = tempfile::tempdir().unwrap();
         let archive = src.path().join(format!("{}.tar.gz", pkg_name("0.1.0")));
         std::fs::write(&archive, fake_package_with_exe("0.1.0", GAME, &[], body)).unwrap();
-        let out = e
-            .core
-            .host_install_local(archive.to_str().unwrap())
+        e.core
+            .host_install_local(&e.id, archive.to_str().unwrap())
             .await
-            .unwrap();
-        let pkg = out.package.dir.clone();
+            .unwrap()
+            .package
+            .dir
+    }
 
-        let free = |n: usize| -> Vec<u16> {
-            let ls: Vec<_> = (0..n)
-                .map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap())
-                .collect();
-            ls.iter().map(|l| l.local_addr().unwrap().port()).collect()
-        };
-        let ports = free(3);
+    fn free_ports(n: usize) -> Vec<u16> {
+        let ls: Vec<_> = (0..n)
+            .map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap())
+            .collect();
+        ls.iter().map(|l| l.local_addr().unwrap().port()).collect()
+    }
+
+    /// Applying settings writes the config into the server's own folder and runs nothing: the
+    /// launcher makes no account (the first admin is created in the web admin).
+    #[tokio::test]
+    async fn setup_writes_the_config_into_the_servers_folder_and_makes_no_account() {
+        let e = env();
+        let pkg = installed(&e).await;
+        let ports = free_ports(3);
         let s = HostSettings {
+            server_name: "Weekend".into(),
             login_port: ports[0],
             instance_port: ports[1],
             web_port: ports[2],
-            admin_name: "boss".into(),
             ..Default::default()
         };
-        let password = throwaway_password();
         let res = e
             .core
-            .host_setup(poe2_launcher_lib::host_ops::SetupRequest {
-                settings: s.clone(),
-                admin_password: password.clone(),
-            })
+            .host_setup(&e.id, poe2_launcher_lib::host_ops::SetupRequest { settings: s })
             .await
             .unwrap();
-        assert!(!res.admin_existed);
-        assert!(!e.core.host.is_running(), "the server was not started");
-        let calls = std::fs::read_to_string(pkg.join("calls.log")).unwrap();
-        assert_eq!(
-            calls.lines().collect::<Vec<_>>(),
-            [
-                "account create boss --password-stdin",
-                "account role boss admin"
-            ]
-        );
-        assert_eq!(
-            std::fs::read_to_string(pkg.join("stdin.log")).unwrap(),
-            password
-        );
-        assert!(
-            !calls.contains(&password),
-            "the password is on no command line"
-        );
-        assert!(!pkg.join("config/server.setup.toml").exists());
-        assert!(pkg.join("config/server.toml").is_file());
-        // The password is in no file the launcher wrote (the fake's own stdin.log aside).
-        for f in all_files(e.tmp.path()) {
-            if f.file_name().is_some_and(|n| n == "stdin.log") {
-                continue;
-            }
-            if let Ok(t) = std::fs::read_to_string(&f) {
-                assert!(!t.contains(&password), "password in {}", f.display());
-            }
-        }
-
-        // An existing name is promoted; its password stays.
-        std::fs::write(pkg.join("taken"), b"").unwrap();
-        std::fs::remove_file(pkg.join("calls.log")).unwrap();
-        let res = e
-            .core
-            .host_setup(poe2_launcher_lib::host_ops::SetupRequest {
-                settings: s.clone(),
-                admin_password: throwaway_password(),
-            })
-            .await
-            .unwrap();
-        assert!(res.admin_existed);
-        let calls = std::fs::read_to_string(pkg.join("calls.log")).unwrap();
-        assert!(calls.contains("account role boss admin"), "{calls}");
-
-        // Another failure of `create` is an error that never carries the password.
-        let body = b"#!/bin/sh\nIFS= read -r pw; echo 'disk full' >&2; exit 1\n";
-        std::fs::write(pkg.join("poe-server"), body).unwrap();
-        let pw = throwaway_password();
-        let err = e
-            .core
-            .host_setup(poe2_launcher_lib::host_ops::SetupRequest {
-                settings: s.clone(),
-                admin_password: pw.clone(),
-            })
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("disk full") && !err.contains(&pw), "{err}");
-
-        // A password with a line break cannot be sent as one line.
-        let err = e
-            .core
-            .host_setup(poe2_launcher_lib::host_ops::SetupRequest {
-                settings: s,
-                admin_password: "line\nbreak-password".into(),
-            })
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("line break"), "{err}");
+        assert!(!e.core.runtime(&e.id).is_running(), "the server was not started");
+        assert!(!pkg.join("calls.log").exists(), "no poe-server command ran");
+        let folder = e.tmp.path().join("data/servers").join(&e.id);
+        assert_eq!(res.config_file, folder.join("server.toml"));
+        let cfg = std::fs::read_to_string(&res.config_file).unwrap();
+        assert!(cfg.contains(&folder.join("data/server.sqlite").display().to_string()), "{cfg}");
+        assert!(cfg.contains(&folder.join("mods").display().to_string()), "{cfg}");
+        assert!(!pkg.join("config/server.toml").exists(), "the package stays untouched");
+        assert_eq!(res.profile.name, "Weekend");
+        assert!(e.core.host_settings(&e.id).unwrap().configured);
     }
 
-    #[test]
-    fn the_password_is_not_printed_by_debug() {
-        let r = poe2_launcher_lib::host_ops::SetupRequest {
-            settings: HostSettings::default(),
-            admin_password: "very-secret-pw".into(),
+    /// Several servers: own ports, a shared package, refused port clashes, and a delete that
+    /// removes the server's folder, settings and Servers entry but keeps a package still in use.
+    #[tokio::test]
+    async fn several_servers_share_packages_and_delete_cleanly() {
+        let e = env();
+        let pkg = installed(&e).await;
+        let first = e.core.host_settings(&e.id).unwrap();
+        let second = e.core.host_create("Second").unwrap();
+        assert_ne!(second, e.id);
+        let s2 = e.core.host_settings(&second).unwrap();
+        assert!(first.port_clashes(&s2).is_empty(), "the new server got other ports");
+        assert_eq!(s2.package_dir.as_deref(), Some(pkg.as_path()), "the installed release is reused");
+        assert_eq!(e.core.host_list().await.unwrap().len(), 2);
+
+        let ports = free_ports(6);
+        let mk = |p: &[u16], name: &str| HostSettings {
+            server_name: name.into(),
+            login_port: p[0],
+            instance_port: p[1],
+            web_port: p[2],
+            ..Default::default()
         };
-        assert!(!format!("{r:?}").contains("very-secret"));
+        let req = |s| poe2_launcher_lib::host_ops::SetupRequest { settings: s };
+        e.core.host_setup(&e.id, req(mk(&ports[0..3], "First"))).await.unwrap();
+        let err = e
+            .core
+            .host_setup(&second, req(mk(&ports[0..3], "Second")))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("First uses port"), "{err}");
+        e.core.host_setup(&second, req(mk(&ports[3..6], "Second"))).await.unwrap();
+        let profiles = e.core.profiles().unwrap();
+        assert_eq!(profiles.len(), 2);
+
+        // A backup in the second server's folder, to see it go.
+        let folder = e.tmp.path().join("data/servers").join(&second);
+        std::fs::create_dir_all(folder.join("data")).unwrap();
+        std::fs::write(folder.join("data/server.sqlite"), b"db").unwrap();
+        e.core.host_delete(&second).await.unwrap();
+        assert!(!folder.exists());
+        assert_eq!(e.core.host_ids(), std::slice::from_ref(&e.id));
+        assert_eq!(e.core.profiles().unwrap().len(), 1, "its Servers entry went too");
+        assert!(pkg.is_dir(), "the first server still uses the package");
+        assert!(e.core.host_delete(&second).await.is_err(), "gone");
+
+        e.core.host_delete(&e.id).await.unwrap();
+        assert!(e.core.host_ids().is_empty());
+        assert!(!pkg.exists(), "nobody uses the package any more");
     }
 }
 
@@ -694,11 +667,11 @@ async fn real_package_setup_start_status_log_stop() {
     };
     e.core.set_settings(settings).unwrap();
     assert!(
-        e.core.host_status().await.unwrap().game_installed,
+        e.core.host_status(&e.id).await.unwrap().game_installed,
         "{game} must look like a game install"
     );
 
-    let out = e.core.host_install_local(&pkg).await.unwrap();
+    let out = e.core.host_install_local(&e.id, &pkg).await.unwrap();
     println!(
         "installed {} (checksum verified: {})",
         out.package.name, out.checksum_verified
@@ -711,15 +684,13 @@ async fn real_package_setup_start_status_log_stop() {
         instance_port: base + 1,
         web_port: base + 2,
         public_host: "127.0.0.1".into(),
-        admin_name: "hostadmin".into(),
         open_registration: false,
         ..Default::default()
     };
     let res = e
         .core
-        .host_setup(poe2_launcher_lib::host_ops::SetupRequest {
+        .host_setup(&e.id, poe2_launcher_lib::host_ops::SetupRequest {
             settings: s.clone(),
-            admin_password: password.into(),
         })
         .await
         .unwrap();
@@ -727,16 +698,11 @@ async fn real_package_setup_start_status_log_stop() {
         "setup done; profile {} at {}",
         res.profile.name, res.profile.url
     );
-    assert!(!res.admin_existed);
     assert_eq!(res.profile.url, format!("http://127.0.0.1:{}", base + 2));
-    assert!(!e.core.host.is_running(), "setup does not start the server");
+    assert!(!e.core.runtime(&e.id).is_running(), "setup does not start the server");
     let pkg_dir = out.package.dir.clone();
-    assert!(pkg_dir.join("config/server.toml").is_file());
-    assert!(
-        !pkg_dir.join("config/server.setup.toml").exists(),
-        "no private config is made any more"
-    );
-    let cfg = std::fs::read_to_string(pkg_dir.join("config/server.toml")).unwrap();
+    assert_eq!(res.config_file, e.tmp.path().join("data/servers").join(&e.id).join("server.toml"));
+    let cfg = std::fs::read_to_string(&res.config_file).unwrap();
     assert!(
         cfg.contains(&format!("0.0.0.0:{base}")) && cfg.contains("open_registration = false"),
         "{cfg}"
@@ -745,17 +711,19 @@ async fn real_package_setup_start_status_log_stop() {
         cfg.contains(
             &e.tmp
                 .path()
-                .join("data/server/data/server.sqlite")
+                .join("data/servers")
+                .join(&e.id)
+                .join("data/server.sqlite")
                 .display()
                 .to_string()
         )
     );
 
     // Start, wait for the API, look at status and the log.
-    e.core.host_start().await.unwrap();
+    e.core.host_start(&e.id).await.unwrap();
     let mut info = None;
     for _ in 0..240 {
-        let st = e.core.host_status().await.unwrap();
+        let st = e.core.host_status(&e.id).await.unwrap();
         if let Some(i) = st.info {
             info = Some(i);
             break;
@@ -764,7 +732,7 @@ async fn real_package_setup_start_status_log_stop() {
             matches!(st.run, RunState::Running { .. }),
             "server died: {:?}\n{}",
             st.run,
-            e.core.host_log_tail(20).join("\n")
+            e.core.host_log_tail(&e.id, 20).join("\n")
         );
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
@@ -781,7 +749,7 @@ async fn real_package_setup_start_status_log_stop() {
     );
     assert_eq!(info.login_port, base);
     assert_eq!(info.instance_port, Some(base + 1));
-    let tail = e.core.host_log_tail(50);
+    let tail = e.core.host_log_tail(&e.id, 50);
     println!(
         "log tail ({} lines):\n{}",
         tail.len(),
@@ -811,7 +779,7 @@ async fn real_package_setup_start_status_log_stop() {
             .any(|(n, _)| n == "host:log")
     );
     // A second start is refused while it runs; so is a setup.
-    assert!(e.core.host_start().await.is_err());
+    assert!(e.core.host_start(&e.id).await.is_err());
 
     // The same with curl, as a user would check it.
     if let Ok(o) = std::process::Command::new("curl")
@@ -828,6 +796,15 @@ async fn real_package_setup_start_status_log_stop() {
         assert!(body.contains("Launcher test server"), "{body}");
     }
     let me = e.core.profiles().unwrap().remove(0);
+
+    // The first admin is made in the web admin's first-run page (this computer only).
+    let made = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{}/api/v1/setup", base + 2))
+        .json(&serde_json::json!({"username": "hostadmin", "password": password}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(made.status().as_u16(), 201, "first admin created");
 
     // The admin can log in; the role is admin; the web-admin link comes from the real server
     // (recorded, never opened).
@@ -856,8 +833,8 @@ async fn real_package_setup_start_status_log_stop() {
     assert!(reg.is_err(), "open_registration = false must refuse");
 
     // Stop.
-    e.core.host_stop().await.unwrap();
-    assert_eq!(e.core.host.state(), RunState::Stopped);
+    e.core.host_stop(&e.id).await.unwrap();
+    assert_eq!(e.core.runtime(&e.id).state(), RunState::Stopped);
     assert!(
         poe2_launcher_lib::host::busy_ports(&s).is_empty(),
         "ports are free again"
@@ -886,12 +863,12 @@ async fn real_package_setup_start_status_log_stop() {
         }
     }
     println!("password absent from {checked} text files");
-    let log = std::fs::read_to_string(e.tmp.path().join("data/server/server.log")).unwrap();
+    let log = std::fs::read_to_string(e.tmp.path().join("data/servers").join(&e.id).join("server.log")).unwrap();
     assert!(!log.contains(password));
 
     // Start again from the saved state (what autostart does) and stop.
     e.core.host_autostart().await; // autostart is off: nothing happens
-    assert!(!e.core.host.is_running());
+    assert!(!e.core.runtime(&e.id).is_running());
 }
 
 #[cfg(unix)]

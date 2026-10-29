@@ -4,12 +4,15 @@
 
   let dialog: HTMLDialogElement | undefined = $state();
   let ticked = $state(false);
+  let typed = $state('');
   const c = $derived(confirmer.current);
+  const ok = $derived(!!c && (!c.acknowledge || ticked) && (!c.typeToConfirm || typed === c.typeToConfirm));
 
   $effect(() => {
     if (!dialog) return;
     if (c && !dialog.open) {
       ticked = false;
+      typed = '';
       dialog.showModal();
     } else if (!c && dialog.open) {
       dialog.close();
@@ -29,7 +32,7 @@
       class="dialog-body"
       onsubmit={(e) => {
         e.preventDefault();
-        if (!c.acknowledge || ticked) confirmer.answer(true);
+        if (ok) confirmer.answer(true);
       }}
     >
       <div class="dialog-head">
@@ -39,15 +42,26 @@
       <div id="confirm-msg" class="dialog-msg">
         {#each c.message.split('\n\n') as para (para)}<p>{para}</p>{/each}
       </div>
+      {#if c.typeToConfirm}
+        <label class="field">
+          <span>Type <b class="confirm-word">{c.typeToConfirm}</b> to confirm</span>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input bind:value={typed} autocomplete="off" spellcheck="false" autofocus />
+        </label>
+      {/if}
       {#if c.acknowledge}
         <label class="check ack"><input type="checkbox" bind:checked={ticked} /> <span>{c.acknowledge}</span></label>
       {/if}
       <div class="actions">
         <button type="button" class="btn" onclick={() => confirmer.answer(false)}>{c.cancelLabel ?? 'Cancel'}</button>
-        <button type="submit" class="btn {c.danger ? 'danger solid' : 'primary'}" disabled={!!c.acknowledge && !ticked}>
+        <button type="submit" class="btn {c.danger ? 'danger solid' : 'primary'}" disabled={!ok}>
           {c.confirmLabel ?? 'OK'}
         </button>
       </div>
     </form>
   {/if}
 </dialog>
+
+<style>
+  .confirm-word { color: var(--text); font-weight: 600; }
+</style>

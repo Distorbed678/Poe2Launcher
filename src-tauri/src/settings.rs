@@ -82,7 +82,7 @@ impl Settings {
     pub fn load(path: &Path) -> Result<Self> {
         match std::fs::read_to_string(path) {
             Ok(text) => serde_json::from_str::<Self>(&text)
-                .map(Self::normalized)
+                .map(|s| s.normalized().without_dropped_versions())
                 .with_context(|| format!("{} is not valid settings JSON", path.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
@@ -94,22 +94,30 @@ impl Settings {
     }
 
     /// Moves an old single `install_dir` into `install_dirs` (it belongs to the oldest supported
-    /// version, the only one that existed when it was written) and drops empty entries and the
-    /// entries of versions that are no longer supported (0.5.5e since launcher 0.6.0); an
-    /// unsupported selected version falls back to the newest.
+    /// version, the only one that existed when it was written) and drops empty entries.
     pub fn normalized(mut self) -> Self {
         if let Some(dir) = self.install_dir.take()
             && let Some(oldest) = crate::version::VersionFile::known_versions().first()
         {
             self.install_dirs.entry((*oldest).to_owned()).or_insert(dir);
         }
-        self.install_dirs.retain(|v, d| {
-            !d.as_os_str().is_empty() && crate::version::VersionFile::is_selectable(v)
-        });
+        self.install_dirs.retain(|_, d| !d.as_os_str().is_empty());
+        if self.game_version.as_deref().is_some_and(str::is_empty) {
+            self.game_version = None;
+        }
+        self
+    }
+
+    /// Forgets what belongs to game versions this launcher no longer supports (0.5.5e since
+    /// launcher 0.6.0): their install folders, and a selected one (back to the newest). Applied
+    /// when the file is read, so an old file still loads and saves.
+    pub fn without_dropped_versions(mut self) -> Self {
+        self.install_dirs
+            .retain(|v, _| crate::version::VersionFile::is_selectable(v));
         if self
             .game_version
             .as_deref()
-            .is_some_and(|v| v.is_empty() || !crate::version::VersionFile::is_selectable(v))
+            .is_some_and(|v| !crate::version::VersionFile::is_selectable(v))
         {
             self.game_version = None;
         }
@@ -293,7 +301,7 @@ mod tests {
         };
         old.install_dirs.insert("0.5.5e".into(), PathBuf::from("/g"));
         old.install_dirs.insert(known.to_owned(), PathBuf::from("/h"));
-        let n = old.normalized();
+        let n = old.normalized().without_dropped_versions();
         assert_eq!(n.game_version, None, "a dropped version falls back to the newest");
         assert_eq!(n.install_dirs.keys().collect::<Vec<_>>(), [known]);
         n.validate().unwrap();

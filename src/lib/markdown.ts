@@ -180,3 +180,14 @@ export function plainText(src: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+/** Length of a news preview, in characters. */
+export const PREVIEW_CHARS = 260;
+
+/** The first lines of a post as plain text (cut at a word near `max`) and whether there is more. */
+export function newsPreview(src: string, max = PREVIEW_CHARS): { text: string; more: boolean } {
+  const all = plainText(src);
+  if (all.length <= max) return { text: all, more: false };
+  const cut = all.lastIndexOf(' ', max);
+  return { text: `${all.slice(0, cut > max * 0.6 ? cut : max).trimEnd()}…`, more: true };
+}

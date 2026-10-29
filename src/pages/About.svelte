@@ -5,9 +5,12 @@
   import PageHead from '../lib/ui/PageHead.svelte';
   import Icon from '../lib/ui/Icon.svelte';
   import Chip from '../lib/ui/Chip.svelte';
+
+  /** `embedded`: shown inside Settings (Updates & About), without its own page title. */
+  let { embedded = false }: { embedded?: boolean } = $props();
 </script>
 
-<PageHead icon="info" title="About" />
+{#if !embedded}<PageHead icon="info" title="About" />{/if}
 
 <section class="card about-hero">
   <img src={iconUrl} alt="" />
@@ -21,7 +24,7 @@
   </div>
 </section>
 
-<div class="two" style="margin-top: 18px">
+<div class="two about-two">
   <section class="card">
     <div class="card-head"><span class="head-icon"><Icon name="portal" size={16} /></span><h2>Supported game versions</h2></div>
     <ul class="depot-list">
@@ -46,7 +49,7 @@
   </section>
 </div>
 
-<section class="card" style="margin-top: 18px">
+<section class="card about-disclaimer">
   <div class="card-head"><span class="head-icon"><Icon name="shield" size={16} /></span><h2>Disclaimer</h2></div>
   <p class="hint">
     This is an unofficial, fan-made project for personal and educational use. It is <b>not affiliated with, endorsed by or connected to Grinding Gear Games</b>;
@@ -54,3 +57,7 @@
     The client hook that the launcher deploys can be detected as a modification by anti-cheat software; use is at your own risk.
   </p>
 </section>
+
+<style>
+  .about-two, .about-disclaimer { margin-top: var(--sp-4); }
+</style>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseInline, parseMarkdown, plainText, safeHref } from './markdown';
+import { newsPreview, parseInline, parseMarkdown, plainText, safeHref } from './markdown';
 
 describe('inline', () => {
   it('reads bold, italic, code and links', () => {
@@ -81,5 +81,17 @@ describe('blocks', () => {
     expect(parseMarkdown('```\nopen')).toEqual([{ t: 'code', s: 'open' }]);
     expect(parseMarkdown('')).toEqual([]);
     expect(parseMarkdown('####### not a heading').map((x) => x.t)).toEqual(['p']);
+  });
+});
+
+describe('news previews', () => {
+  it('keeps short posts whole and cuts long ones at a word', () => {
+    expect(newsPreview('**Hello** world')).toEqual({ text: 'Hello world', more: false });
+    const long = `${'word '.repeat(80)}end`;
+    const p = newsPreview(long, 50);
+    expect(p.more).toBe(true);
+    expect(p.text.endsWith('word…')).toBe(true);
+    expect(p.text.length).toBeLessThanOrEqual(51);
+    expect(newsPreview('')).toEqual({ text: '', more: false });
   });
 });

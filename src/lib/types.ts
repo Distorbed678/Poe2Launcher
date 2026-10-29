@@ -373,7 +373,6 @@ export interface HostSettings {
   public_host: string;
   web_public: boolean;
   open_registration: boolean;
-  admin_name: string;
   autostart: boolean;
   package_dir: string | null;
   configured: boolean;
@@ -396,6 +395,8 @@ export type RunState =
   | { state: 'exited'; code: number | null };
 
 export interface HostStatus {
+  /** The hosted server's id (`s1`, `s2`, ...). */
+  id: string;
   settings: HostSettings;
   package: PackageInfo | null;
   package_problem: string | null;
@@ -409,8 +410,26 @@ export interface HostStatus {
   web_url: string;
   lan_ip: string | null;
   log_file: string;
+  /** The server's own folder (database, config, backups, log). */
+  folder: string;
   busy: boolean;
   hosting_guide_url: string;
+}
+
+/** Manage > Overview: usage of a running server (`host_metrics`). */
+export interface HostMetrics {
+  cpu_pct: number | null;
+  rss_bytes: number | null;
+  cpu_history: number[];
+  rss_history: number[];
+  tick_avg_ms: number | null;
+  tick_max_ms: number | null;
+  net_in_bps: number | null;
+  net_out_bps: number | null;
+  players: number | null;
+  uptime_secs: number | null;
+  /** The server reports metrics (`[metrics] enabled`). */
+  server_metrics: boolean;
 }
 
 export interface ServerRelease {
@@ -454,18 +473,15 @@ export interface InstallOutcome {
   package: PackageInfo;
   sha256: string | null;
   checksum_verified: boolean;
-  source: 'download' | 'file' | 'folder' | 'current';
+  source: 'download' | 'file' | 'folder' | 'current' | 'shared';
 }
 
 export interface SetupRequest {
   settings: HostSettings;
-  /** Typed in the UI, used once for the admin account, never stored. */
-  admin_password: string;
 }
 
 export interface SetupResult {
   profile: ProfileView;
-  admin_existed: boolean;
   config_file: string;
 }
 

@@ -21,7 +21,7 @@ export function hrefFor(path: string, query?: Record<string, string | undefined>
 }
 
 /** Pages that were merged into others keep working as links (`#/account` and `#/host` are now Servers). */
-const LEGACY: Record<string, string> = { account: 'servers', install: 'library', mods: 'library', host: 'servers' };
+const LEGACY: Record<string, string> = { account: 'servers', install: 'library', mods: 'library', host: 'servers', about: 'settings' };
 
 export function pageFor(segment: string | undefined): string {
   if (!segment) return 'home';

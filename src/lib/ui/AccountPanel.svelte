@@ -8,14 +8,13 @@
   import Spinner from './Spinner.svelte';
   import type { ProfileView } from '../types';
 
-  /** Log in, create an account or log out on one server (the account part of a server's card). */
+  /** Log in or log out on one server (the account part of a server's row). Accounts are made on
+   * the server's own register page, which "Create an account" opens in the browser. */
   let { profile }: { profile: ProfileView } = $props();
 
   let open = $state(false);
-  let mode = $state<'login' | 'register'>('login');
   let username = $state('');
   let password = $state('');
-  let password2 = $state('');
   let busy = $state(false);
 
   const p = $derived(profile);
@@ -24,8 +23,7 @@
     return typeof i === 'object' ? i : null;
   });
   const blocked = $derived(isPlainHttpBlocked(p));
-  const registrationClosed = $derived(info !== null && !info.open_registration);
-  const canRegister = $derived(password.length >= 8 && password === password2 && username.trim().length >= 3);
+  const registrationOpen = $derived(info?.open_registration ?? false);
 
   async function login(e: SubmitEvent) {
     e.preventDefault();
@@ -39,26 +37,14 @@
     }
   }
 
-  async function register(e: SubmitEvent) {
-    e.preventDefault();
-    busy = true;
-    const created = await run(() => ipc.register(p.id, username, password), 'Account created');
-    if (created) {
-      // Straight into a login with the same credentials.
-      const r = await run(() => ipc.login(p.id, username, password), 'Logged in');
-      if (r) await app.refreshProfiles();
-      password = '';
-      password2 = '';
-      mode = 'login';
-      open = false;
-    }
-    busy = false;
-  }
-
   async function logout() {
     const r = await run(() => ipc.logout(p.id));
     if (r) toasts.show(r.revoked ? 'ok' : 'error', r.message);
     await app.refreshProfiles();
+  }
+
+  function registerPage() {
+    void run(() => ipc.registerPageOpen(p.id), 'Opening the server\'s register page in your browser...');
   }
 </script>
 
@@ -77,51 +63,27 @@
         {#if p.account}Login expired for <b>{p.account}</b>{:else}Not logged in{/if}</span>
       <span class="grow"></span>
       <button type="button" class="btn sm primary" onclick={() => (open = !open)} aria-expanded={open}>
-        {open ? 'Close' : 'Log in / Create account'}
+        {open ? 'Close' : 'Log in'}
       </button>
     </div>
     {#if p.keyring_error}<p class="err">{p.keyring_error}</p>{/if}
     {#if open}
       <div class="form">
-        <div class="seg" role="tablist" aria-label="Login or register">
-          <button type="button" class:on={mode === 'login'} role="tab" aria-selected={mode === 'login'} onclick={() => (mode = 'login')}>Log in</button>
-          <button
-            type="button"
-            class:on={mode === 'register'}
-            role="tab"
-            aria-selected={mode === 'register'}
-            disabled={registrationClosed}
-            title={registrationClosed ? 'This server has closed registration' : ''}
-            onclick={() => (mode = 'register')}
-          >Create account</button>
-        </div>
-        {#if registrationClosed}<p class="hint">Registration is closed on this server: an admin creates accounts.</p>{/if}
         {#if blocked}<p class="err">Allow plain http for this server first (above).</p>{/if}
-        {#if mode === 'login' || registrationClosed}
-          <form onsubmit={login}>
-            <label class="field"><span>Account name</span><input bind:value={username} autocomplete="username" /></label>
-            <label class="field"><span>Password</span><input type="password" bind:value={password} autocomplete="current-password" /></label>
-            <div class="actions">
-              <button class="btn primary" type="submit" disabled={busy || blocked || !username.trim() || !password}>
-                {#if busy}<Spinner size={14} />{/if} Log in
-              </button>
-            </div>
-          </form>
-        {:else}
-          <form onsubmit={register}>
-            <label class="field"><span>Account name (3-64 characters: letters, digits, _ . @ + -)</span><input bind:value={username} autocomplete="username" /></label>
-            <label class="field"><span>Password (at least 8 characters)</span><input type="password" bind:value={password} autocomplete="new-password" /></label>
-            <label class="field">
-              <span>Repeat the password</span>
-              <input type="password" bind:value={password2} autocomplete="new-password" aria-invalid={password2 !== '' && password !== password2} />
-            </label>
-            <div class="actions">
-              <button class="btn primary" type="submit" disabled={busy || blocked || !canRegister}>
-                {#if busy}<Spinner size={14} />{/if} Create account
-              </button>
-            </div>
-          </form>
-        {/if}
+        <form onsubmit={login}>
+          <label class="field"><span>Account name</span><input bind:value={username} autocomplete="username" /></label>
+          <label class="field"><span>Password</span><input type="password" bind:value={password} autocomplete="current-password" /></label>
+          <div class="actions">
+            {#if registrationOpen}
+              <button type="button" class="link" onclick={registerPage}>No account yet? Create one <Icon name="external" size={12} /></button>
+              <span class="grow"></span>
+            {/if}
+            <button class="btn primary" type="submit" disabled={busy || blocked || !username.trim() || !password}>
+              {#if busy}<Spinner size={14} />{/if} Log in
+            </button>
+          </div>
+        </form>
+        {#if info && !registrationOpen}<p class="hint">Registration is closed on this server: an admin creates accounts in its web admin.</p>{/if}
         <p class="hint">The password goes to this server{p.plain_http === 'https' ? ' over https.' : p.plain_http === 'loopback' ? ' on this computer.' : ' (use https outside your own network).'}</p>
       </div>
     {/if}
@@ -133,4 +95,5 @@
   .who { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
   .form { margin-top: 12px; max-width: 440px; }
   .acct .hint { margin: 6px 0 0; }
+  .actions { align-items: center; }
 </style>

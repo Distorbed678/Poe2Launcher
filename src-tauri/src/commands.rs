@@ -8,7 +8,7 @@ use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::{
-    api::{AccountInfo, ServerInfo, ServerStatus},
+    api::{ServerInfo, ServerStatus},
     backup::{BackupInfo, BackupSettings},
     backup_ops::BackupStatus,
     core::{
@@ -18,7 +18,7 @@ use crate::{
     desktop::DesktopEntry,
     hook_ops::{HookCheck, HookOutcome, HookStatus},
     host::{HostSettings, ServerRelease},
-    host_ops::{HostStatus, InstallOutcome, SetupRequest, SetupResult},
+    host_ops::{HostMetrics, HostStatus, InstallOutcome, SetupRequest, SetupResult},
     host_update::{ServerUpdateCheck, UpdateOutcome},
     logs::{LogContent, LogList},
     mod_ops::{CacheStatus, ModsView, Pruned},
@@ -124,16 +124,6 @@ pub async fn account_login(
 }
 
 #[tauri::command]
-pub async fn account_register(
-    app: App<'_>,
-    id: String,
-    username: String,
-    password: String,
-) -> Res<AccountInfo> {
-    app.register(&id, &username, &password).await.map_err(err)
-}
-
-#[tauri::command]
 pub async fn account_logout(app: App<'_>, id: String) -> Res<LogoutResult> {
     app.logout(&id).await.map_err(err)
 }
@@ -159,6 +149,20 @@ impl UrlOpener for TauriOpener {
 #[tauri::command]
 pub async fn web_admin_open(app: App<'_>, handle: tauri::AppHandle, id: String) -> Res<()> {
     app.web_admin_open(&id, &TauriOpener(handle))
+        .await
+        .map_err(err)
+}
+
+/// Opens the server's page for new accounts in the system browser.
+#[tauri::command]
+pub fn register_page_open(app: App<'_>, handle: tauri::AppHandle, id: String) -> Res<()> {
+    app.register_page_open(&id, &TauriOpener(handle)).map_err(err)
+}
+
+/// "Open web admin" of a server hosted on this computer.
+#[tauri::command]
+pub async fn host_web_admin_open(app: App<'_>, handle: tauri::AppHandle, id: String) -> Res<()> {
+    app.host_web_admin_open(&id, &TauriOpener(handle))
         .await
         .map_err(err)
 }
@@ -375,8 +379,28 @@ pub async fn hook_install_latest(app: App<'_>) -> Res<HookOutcome> {
 // --- Host a server ------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn host_status(app: App<'_>) -> Res<HostStatus> {
-    app.host_status().await.map_err(err)
+pub async fn host_list(app: App<'_>) -> Res<Vec<HostStatus>> {
+    app.host_list().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn host_status(app: App<'_>, id: String) -> Res<HostStatus> {
+    app.host_status(&id).await.map_err(err)
+}
+
+#[tauri::command]
+pub fn host_create(app: App<'_>, name: String) -> Res<String> {
+    app.host_create(&name).map_err(err)
+}
+
+#[tauri::command]
+pub async fn host_delete(app: App<'_>, id: String) -> Res<()> {
+    app.host_delete(&id).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn host_metrics(app: App<'_>, id: String) -> Res<HostMetrics> {
+    app.host_metrics(&id).await.map_err(err)
 }
 
 #[tauri::command]
@@ -385,13 +409,13 @@ pub async fn host_find_release(app: App<'_>) -> Res<ServerRelease> {
 }
 
 #[tauri::command]
-pub async fn host_install_latest(app: App<'_>) -> Res<InstallOutcome> {
-    app.host_install_latest().await.map_err(err)
+pub async fn host_install_latest(app: App<'_>, id: String) -> Res<InstallOutcome> {
+    app.host_install_latest(&id).await.map_err(err)
 }
 
 #[tauri::command]
-pub async fn host_install_local(app: App<'_>, path: String) -> Res<InstallOutcome> {
-    app.host_install_local(&path).await.map_err(err)
+pub async fn host_install_local(app: App<'_>, id: String, path: String) -> Res<InstallOutcome> {
+    app.host_install_local(&id, &path).await.map_err(err)
 }
 
 #[tauri::command]
@@ -405,42 +429,42 @@ pub async fn host_public_ip(app: App<'_>) -> Res<String> {
 }
 
 #[tauri::command]
-pub async fn host_setup(app: App<'_>, request: SetupRequest) -> Res<SetupResult> {
-    app.host_setup(request).await.map_err(err)
+pub async fn host_setup(app: App<'_>, id: String, request: SetupRequest) -> Res<SetupResult> {
+    app.host_setup(&id, request).await.map_err(err)
 }
 
 #[tauri::command]
-pub async fn host_start(app: App<'_>) -> Res<()> {
-    app.host_start().await.map_err(err)
+pub async fn host_start(app: App<'_>, id: String) -> Res<()> {
+    app.host_start(&id).await.map_err(err)
 }
 
 #[tauri::command]
-pub async fn host_stop(app: App<'_>) -> Res<()> {
-    app.host_stop().await.map_err(err)
+pub async fn host_stop(app: App<'_>, id: String) -> Res<()> {
+    app.host_stop(&id).await.map_err(err)
 }
 
 #[tauri::command]
-pub fn host_log_tail(app: App<'_>, lines: usize) -> Vec<String> {
-    app.host_log_tail(lines)
+pub fn host_log_tail(app: App<'_>, id: String, lines: usize) -> Vec<String> {
+    app.host_log_tail(&id, lines)
 }
 
 #[tauri::command]
-pub fn host_set_autostart(app: App<'_>, on: bool) -> Res<HostSettings> {
-    app.host_set_autostart(on).map_err(err)
+pub fn host_set_autostart(app: App<'_>, id: String, on: bool) -> Res<HostSettings> {
+    app.host_set_autostart(&id, on).map_err(err)
 }
 
 /// Whether a newer server release than the installed one exists. Quiet: a failed lookup is in
 /// the answer's `error`, never an error.
 #[tauri::command]
-pub async fn host_update_check(app: App<'_>) -> Res<ServerUpdateCheck> {
-    Ok(app.host_update_check().await)
+pub async fn host_update_check(app: App<'_>, id: String) -> Res<ServerUpdateCheck> {
+    Ok(app.host_update_check(&id).await)
 }
 
 /// The one-click server update: stop, back up, install, keep the config, start again; on a
 /// failure the old server is put back.
 #[tauri::command]
-pub async fn host_update_apply(app: App<'_>) -> Res<UpdateOutcome> {
-    app.host_update_apply().await.map_err(err)
+pub async fn host_update_apply(app: App<'_>, id: String) -> Res<UpdateOutcome> {
+    app.host_update_apply(&id).await.map_err(err)
 }
 
 /// Opens the hosting guide (a fixed address) in the system browser.
@@ -509,14 +533,14 @@ pub fn log_open_folder(app: App<'_>, handle: tauri::AppHandle, kind: String) -> 
 // --- Server backups ------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn backup_status(app: App<'_>) -> Res<BackupStatus> {
-    app.backup_status().map_err(err)
+pub fn backup_status(app: App<'_>, id: String) -> Res<BackupStatus> {
+    app.backup_status(&id).map_err(err)
 }
 
 #[tauri::command]
-pub async fn backup_create(app: App<'_>) -> Res<BackupInfo> {
+pub async fn backup_create(app: App<'_>, id: String) -> Res<BackupInfo> {
     let core = app.inner().clone();
-    tokio::task::spawn_blocking(move || core.backup_create())
+    tokio::task::spawn_blocking(move || core.backup_create(&id))
         .await
         .map_err(|e| e.to_string())?
         .map_err(err)
@@ -524,22 +548,22 @@ pub async fn backup_create(app: App<'_>) -> Res<BackupInfo> {
 
 /// Restores a backup; returns the backup made of the database that was replaced.
 #[tauri::command]
-pub async fn backup_restore(app: App<'_>, name: String) -> Res<Option<BackupInfo>> {
+pub async fn backup_restore(app: App<'_>, id: String, name: String) -> Res<Option<BackupInfo>> {
     let core = app.inner().clone();
-    tokio::task::spawn_blocking(move || core.backup_restore(&name))
+    tokio::task::spawn_blocking(move || core.backup_restore(&id, &name))
         .await
         .map_err(|e| e.to_string())?
         .map_err(err)
 }
 
 #[tauri::command]
-pub fn backup_delete(app: App<'_>, name: String) -> Res<()> {
-    app.backup_delete(&name).map_err(err)
+pub fn backup_delete(app: App<'_>, id: String, name: String) -> Res<()> {
+    app.backup_delete(&id, &name).map_err(err)
 }
 
 #[tauri::command]
-pub fn backup_set_settings(app: App<'_>, auto: bool, keep: u32) -> Res<BackupSettings> {
-    app.backup_set_settings(auto, keep).map_err(err)
+pub fn backup_set_settings(app: App<'_>, id: String, auto: bool, keep: u32) -> Res<BackupSettings> {
+    app.backup_set_settings(&id, auto, keep).map_err(err)
 }
 
 // --- Links -----------------------------------------------------------------------------------

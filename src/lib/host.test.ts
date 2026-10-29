@@ -14,7 +14,6 @@ const base: HostSettings = {
   public_host: '127.0.0.1',
   web_public: false,
   open_registration: false,
-  admin_name: '',
   autostart: false,
   package_dir: null,
   configured: false,
@@ -22,7 +21,7 @@ const base: HostSettings = {
 };
 
 function form(over: Partial<HostForm> = {}): HostForm {
-  return { ...formFromSettings(base, null), admin_name: 'boss', admin_password: 'long-enough', admin_password2: 'long-enough', ...over };
+  return { ...formFromSettings(base, null), ...over };
 }
 
 describe('the setup form', () => {
@@ -31,39 +30,27 @@ describe('the setup form', () => {
     expect(formFromSettings(base, null).public_host).toBe('127.0.0.1');
     expect(formFromSettings({ ...base, configured: true }, '192.168.1.20').public_host).toBe('127.0.0.1');
     expect(formFromSettings({ ...base, public_host: 'play.example' }, '192.168.1.20').public_host).toBe('play.example');
-    // The password never comes from saved settings.
-    expect(formFromSettings(base, null).admin_password).toBe('');
   });
 
   it('accepts a good form', () => {
-    expect(validateHostForm(form(), true)).toEqual([]);
+    expect(validateHostForm(form())).toEqual([]);
   });
 
   it('lists what is wrong', () => {
-    const bad = (over: Partial<HostForm>, text: string, needPw = true) =>
-      expect(validateHostForm(form(over), needPw).join(' '), text).toContain(text);
+    const bad = (over: Partial<HostForm>, text: string) =>
+      expect(validateHostForm(form(over)).join(' '), text).toContain(text);
     bad({ server_name: ' ' }, 'server name');
     bad({ cluster_id: 'Has Space' }, 'cluster id');
     bad({ login_port: 80 }, 'login port');
     bad({ web_port: 70000 }, 'web port');
     bad({ web_port: 20481 }, 'three different');
     bad({ public_host: 'http://x' }, 'public host');
-    bad({ admin_name: 'ab' }, 'admin account name');
-    bad({ admin_password: 'short', admin_password2: 'short' }, 'at least 8');
-    bad({ admin_password2: 'different-pw' }, 'differ');
   });
 
-  it('does not ask for a password when only re-applying settings', () => {
-    expect(validateHostForm(form({ admin_name: '', admin_password: '', admin_password2: '' }), false)).toEqual([]);
-    // But a typed password is still checked.
-    expect(validateHostForm(form({ admin_password: 'short', admin_password2: 'short' }), false)).not.toEqual([]);
-  });
-
-  it('turns the form back into settings without the password', () => {
+  it('turns the form back into settings', () => {
     const s = settingsFromForm(base, form({ server_name: '  Friends  ', public_host: ' 10.0.0.2 ' }));
     expect(s.server_name).toBe('Friends');
     expect(s.public_host).toBe('10.0.0.2');
-    expect(JSON.stringify(s)).not.toContain('long-enough');
     expect(s.package_dir).toBeNull();
   });
 

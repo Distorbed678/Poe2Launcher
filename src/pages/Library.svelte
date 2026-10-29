@@ -18,7 +18,7 @@
   const tab = $derived(tabs.some((t) => t.id === want) ? want : 'game');
 </script>
 
-<PageHead icon="library" title="Library" sub={`The game for ${versionLabel(app.version)}: install and repair, the client hook, mods and logs`} />
+<PageHead icon="library" title="Library" sub={`The game for ${versionLabel(app.version)}, mods and logs`} />
 
 <Tabs {tabs} value={tab} label="Library" onchange={(id) => router.go('library', { tab: id === 'game' ? undefined : id })} />
 

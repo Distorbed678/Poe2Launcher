@@ -29,6 +29,33 @@
   }
 </script>
 
+{#if compact}
+  <section class="card hook-slim">
+    <div class="slim-row">
+      <span class="head-icon"><Icon name="box" size={16} /></span>
+      <div class="grow slim-text">
+        <b>Client hook</b>
+        <span class="muted">
+          {#if downloaded && h?.installed}{h.installed.version} for {h.installed.game_versions.join(', ')}{#if check && check.release.version !== h.installed.version} · newest {check.release.version}{/if}
+          {:else}{sum.detail || 'The DLLs that connect the game to a private server.'}{/if}
+        </span>
+      </div>
+      <Chip tone={sum.tone} icon={sum.tone === 'ok' ? 'check' : sum.tone === 'bad' ? 'alert' : undefined}>{sum.label}</Chip>
+      <button type="button" class="btn sm" class:primary={action.primary} disabled={busy || !h || (h.busy ?? false)} onclick={go}>
+        {#if busy}<Spinner size={12} />{:else}<Icon name={looksOnly ? 'refresh' : 'download'} size={13} />{/if}
+        {action.label}
+      </button>
+    </div>
+    {#if installing}
+      <div class="progrow hook-prog">
+        <span>{app.hookStep || 'working'}</span>
+        <Progress value={pct} />
+        <span class="num">{app.hookProgress ? formatBytes(app.hookProgress.done) : ''}</span>
+      </div>
+    {/if}
+    {#if app.hookError}<p class="err slim-err">{app.hookError}</p>{/if}
+  </section>
+{:else}
 <section class="card hook-card" class:compact>
   <div class="card-head">
     <span class="head-icon"><Icon name="box" size={16} /></span>
@@ -79,7 +106,14 @@
     {#if !hookReady(h) && !compact}<span class="hint">or build it yourself and set the Hook DLL directory in Settings</span>{/if}
   </div>
 </section>
+{/if}
 
 <style>
+  .slim-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+  .slim-row .head-icon { color: var(--gold); display: grid; place-items: center; }
+  .slim-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .slim-text b { font-weight: 600; }
+  .slim-text .muted { font-size: var(--fs-sm); }
+  .slim-err { margin: var(--sp-3) 0 0; }
   .hook-prog { grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr) 64px; margin-top: 8px; }
 </style>

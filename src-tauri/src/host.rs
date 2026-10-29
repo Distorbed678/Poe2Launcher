@@ -44,7 +44,7 @@ const MAX_ENTRIES: usize = 20_000;
 const MAX_UNPACKED_BYTES: u64 = 2 << 30;
 
 // ---------------------------------------------------------------------------------------------
-// Settings (host.json in the launcher's config directory; no secrets)
+// Settings (one `servers/<id>.json` per hosted server in the launcher's config directory; no secrets)
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
@@ -64,8 +64,6 @@ pub struct HostSettings {
     pub web_public: bool,
     /// `[accounts] open_registration`.
     pub open_registration: bool,
-    /// The admin account made at setup (the name only; the password is never stored).
-    pub admin_name: String,
     /// Start the server when the launcher starts.
     pub autostart: bool,
     /// The extracted package the server runs from.
@@ -87,7 +85,6 @@ impl Default for HostSettings {
             public_host: "127.0.0.1".into(),
             web_public: false,
             open_registration: false,
-            admin_name: String::new(),
             autostart: false,
             package_dir: None,
             configured: false,
@@ -138,15 +135,50 @@ impl HostSettings {
             valid_public_host(&self.public_host),
             "the public host is an IP address or a host name (no spaces, no scheme, no port)"
         );
-        if !self.admin_name.is_empty() {
-            ensure!(
-                valid_account_name(&self.admin_name),
-                "the admin account name is 3-64 characters: letters, digits and _ . @ + -"
-            );
-        }
         Ok(())
     }
+
+    /// The three ports, named.
+    pub fn ports(&self) -> [(&'static str, u16); 3] {
+        [
+            ("login", self.login_port),
+            ("instance", self.instance_port),
+            ("web", self.web_port),
+        ]
+    }
+
+    /// The ports this server shares with `other` (another hosted server).
+    pub fn port_clashes(&self, other: &HostSettings) -> Vec<u16> {
+        let theirs: Vec<u16> = other.ports().iter().map(|p| p.1).collect();
+        self.ports()
+            .iter()
+            .map(|p| p.1)
+            .filter(|p| theirs.contains(p))
+            .collect()
+    }
 }
+
+/// Ports for a new server: the defaults moved by [`PORT_STEP`] until none of them is taken by
+/// another hosted server or `in_use` (a probe of the system, e.g. [`busy_ports`]).
+pub fn next_free_ports(
+    others: &[HostSettings],
+    in_use: &dyn Fn(&HostSettings) -> bool,
+) -> Result<(u16, u16, u16)> {
+    let base = HostSettings::default();
+    for k in 0..200u16 {
+        let mut s = base.clone();
+        s.login_port = base.login_port + k * PORT_STEP;
+        s.instance_port = base.instance_port + k * PORT_STEP;
+        s.web_port = base.web_port + k * PORT_STEP;
+        if others.iter().all(|o| s.port_clashes(o).is_empty()) && !in_use(&s) {
+            return Ok((s.login_port, s.instance_port, s.web_port));
+        }
+    }
+    bail!("no free set of ports found; set them by hand in the server's Network settings")
+}
+
+/// How far the ports of each further hosted server move (20481/6112/8080, 20491/6122/8090, ...).
+pub const PORT_STEP: u16 = 10;
 
 pub fn valid_cluster_id(id: &str) -> bool {
     (1..=32).contains(&id.len())
@@ -183,31 +215,81 @@ pub fn valid_public_host(host: &str) -> bool {
 // ---------------------------------------------------------------------------------------------
 // Folders
 
-/// Where the launcher keeps the server (all below its data directory, never a Steam library).
+/// Where the launcher keeps a hosted server (all below its data directory, never a Steam
+/// library). Each server has an id (`s1`, `s2`, ...): its settings are
+/// `<config>/servers/<id>.json` (+ `<id>.backup.json`), its files `<data>/servers/<id>/`
+/// (database, config, backups, log, mods). The downloaded packages are shared by all servers
+/// (`<data>/server/packages`): the config lives in the server's folder, not in the package.
 #[derive(Debug, Clone)]
 pub struct HostDirs {
+    id: String,
     config_file: PathBuf,
     backup_file: PathBuf,
     root: PathBuf,
+    shared: PathBuf,
+}
+
+/// The folder of the hosted servers' settings files.
+pub fn servers_config_dir(dirs: &Dirs) -> PathBuf {
+    dirs.config.join("servers")
+}
+
+/// A server id: `s` and digits.
+pub fn valid_server_id(id: &str) -> bool {
+    id.len() >= 2 && id.len() <= 8 && id.starts_with('s') && id[1..].chars().all(|c| c.is_ascii_digit())
+}
+
+/// The ids of the hosted servers, in number order.
+pub fn server_ids(dirs: &Dirs) -> Vec<String> {
+    let mut ids: Vec<String> = std::fs::read_dir(servers_config_dir(dirs))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let id = name.strip_suffix(".json")?;
+            valid_server_id(id).then(|| id.to_owned())
+        })
+        .collect();
+    ids.sort_by_key(|id| id[1..].parse::<u32>().unwrap_or(u32::MAX));
+    ids
+}
+
+/// The id for a new server: the smallest free `s<n>`.
+pub fn new_server_id(existing: &[String]) -> String {
+    (1..)
+        .map(|n| format!("s{n}"))
+        .find(|id| !existing.contains(id))
+        .expect("an unused id")
 }
 
 impl HostDirs {
-    pub fn new(dirs: &Dirs) -> Self {
+    pub fn new(dirs: &Dirs, id: &str) -> Self {
+        let cfg = servers_config_dir(dirs);
         Self {
-            config_file: dirs.config.join("host.json"),
-            backup_file: dirs.config.join("backup.json"),
-            root: dirs.data.join("server"),
+            id: id.to_owned(),
+            config_file: cfg.join(format!("{id}.json")),
+            backup_file: cfg.join(format!("{id}.backup.json")),
+            root: dirs.data.join("servers").join(id),
+            shared: dirs.data.join("server"),
         }
+    }
+    pub fn id(&self) -> &str {
+        &self.id
     }
     pub fn settings_file(&self) -> &Path {
         &self.config_file
     }
-    /// Extracted packages, one folder per release.
+    /// The server's own folder.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+    /// Extracted packages, one folder per release, shared by every hosted server.
     pub fn packages(&self) -> PathBuf {
-        self.root.join("packages")
+        self.shared.join("packages")
     }
     pub fn downloads(&self) -> PathBuf {
-        self.root.join("downloads")
+        self.shared.join("downloads")
     }
     /// The database and anything else that must survive an update of the package.
     pub fn data(&self) -> PathBuf {
@@ -215,6 +297,18 @@ impl HostDirs {
     }
     pub fn database(&self) -> PathBuf {
         self.data().join("server.sqlite")
+    }
+    /// The server's config (`POE_CONFIG`), written from the package's example and the settings.
+    pub fn config(&self) -> PathBuf {
+        self.root.join("server.toml")
+    }
+    /// The server's mods (`[mods] dir`).
+    pub fn mods(&self) -> PathBuf {
+        self.root.join("mods")
+    }
+    /// Where the web admin's config editor keeps the previous files (`[web] config_backup_dir`).
+    pub fn config_backups(&self) -> PathBuf {
+        self.root.join("config-backups")
     }
     pub fn log_file(&self) -> PathBuf {
         self.root.join("server.log")
@@ -228,6 +322,46 @@ impl HostDirs {
     }
 }
 
+/// Moves the single hosted server of launchers before 0.6.0 (`<config>/host.json`,
+/// `<data>/server/{data,backups,server.log}`, the config inside its package) to the server id
+/// `s1`. Does nothing when there is no old server or `s1` exists. Returns whether it moved one.
+pub fn migrate_single_server(dirs: &Dirs) -> Result<bool> {
+    let old_settings = dirs.config.join("host.json");
+    if !old_settings.is_file() {
+        return Ok(false);
+    }
+    let new = HostDirs::new(dirs, "s1");
+    if new.settings_file().exists() {
+        return Ok(false);
+    }
+    std::fs::create_dir_all(servers_config_dir(dirs))?;
+    std::fs::create_dir_all(new.root())?;
+    let old_root = dirs.data.join("server");
+    for (from, to) in [
+        (old_root.join("data"), new.data()),
+        (old_root.join("backups"), new.backups()),
+        (old_root.join("server.log"), new.log_file()),
+        (dirs.config.join("backup.json"), new.backup_settings_file().to_path_buf()),
+    ] {
+        if from.exists() {
+            std::fs::rename(&from, &to)
+                .with_context(|| format!("moving {} to {}", from.display(), to.display()))?;
+        }
+    }
+    let settings = HostSettings::load(&old_settings)?;
+    // The config the user may have edited in the web admin lives in the package: keep it next to
+    // the server so the next config write carries the edits over.
+    if let Some(pkg) = &settings.package_dir {
+        let old_cfg = pkg.join("config").join("server.toml");
+        if old_cfg.is_file() && !new.config().exists() {
+            std::fs::copy(&old_cfg, new.config())?;
+        }
+    }
+    settings.save(new.settings_file())?;
+    std::fs::remove_file(&old_settings)?;
+    Ok(true)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Finding the release
 
@@ -238,6 +372,14 @@ pub struct AssetName {
     pub game_version: String,
     pub platform: String,
     pub ext: String,
+}
+
+/// The folder name a package archive unpacks to: the asset name without its extension.
+pub fn package_name_of_asset(asset: &str) -> Option<&str> {
+    parse_asset_name(asset)?;
+    asset
+        .strip_suffix(".tar.gz")
+        .or_else(|| asset.strip_suffix(".zip"))
 }
 
 pub fn parse_asset_name(name: &str) -> Option<AssetName> {
@@ -788,17 +930,20 @@ pub fn install_package(
     game_version: &str,
     os: &str,
 ) -> Result<PackageInfo> {
-    install_package_keeping(source, packages_dir, game_version, os, None)
+    install_package_keeping(source, packages_dir, game_version, os, None, &[])
 }
 
 /// Like [`install_package`], but refuses (before anything is replaced) to overwrite the folder
-/// `keep`: an update keeps the old package until the new one works.
+/// `keep`: an update keeps the old package until the new one works. A folder in `in_use`
+/// (another hosted server runs from it) is never replaced either: the same release is already
+/// there, so it is used as it is.
 pub fn install_package_keeping(
     source: &Path,
     packages_dir: &Path,
     game_version: &str,
     os: &str,
     keep: Option<&Path>,
+    in_use: &[PathBuf],
 ) -> Result<PackageInfo> {
     reject_steam_paths(packages_dir, "server folder")?;
     std::fs::create_dir_all(packages_dir)?;
@@ -828,6 +973,13 @@ pub fn install_package_keeping(
              nothing was changed",
             target.display()
         );
+        if target.exists() && in_use.iter().any(|p| p == &target) {
+            let existing = inspect_package(&target, game_version, os)?;
+            return Ok(PackageInfo {
+                dir: target,
+                ..existing
+            });
+        }
         if target.exists() {
             std::fs::remove_dir_all(&target)
                 .with_context(|| format!("replacing {}", target.display()))?;
@@ -842,11 +994,11 @@ pub fn install_package_keeping(
     result
 }
 
-/// Removes every package folder except `keep`.
-pub fn prune_packages(packages_dir: &Path, keep: &Path) {
+/// Removes every package folder that no hosted server uses (`keep`).
+pub fn prune_packages(packages_dir: &Path, keep: &[PathBuf]) {
     if let Ok(rd) = std::fs::read_dir(packages_dir) {
         for e in rd.flatten() {
-            if e.path() != keep && e.path().is_dir() {
+            if !keep.contains(&e.path()) && e.path().is_dir() {
                 let _ = std::fs::remove_dir_all(e.path());
             }
         }
@@ -855,11 +1007,6 @@ pub fn prune_packages(packages_dir: &Path, keep: &Path) {
 
 // ---------------------------------------------------------------------------------------------
 // The server config
-
-/// Where the config is written: `<package>/config/server.toml`.
-pub fn config_path(package: &Path) -> PathBuf {
-    package.join("config").join("server.toml")
-}
 
 fn table_at<'a>(doc: &'a mut DocumentMut, path: &[&str]) -> &'a mut Table {
     let mut t = doc.as_table_mut();
@@ -899,7 +1046,7 @@ pub fn render_config(
     example: &str,
     s: &HostSettings,
     game_dir: &Path,
-    database: &Path,
+    dirs: &HostDirs,
 ) -> Result<String> {
     s.validate()?;
     let mut doc: DocumentMut = example
@@ -946,7 +1093,15 @@ pub fn render_config(
         "open_registration",
         s.open_registration,
     );
-    set_str(&mut doc, &["database"], "path", &database.to_string_lossy());
+    set_str(&mut doc, &["database"], "path", &dirs.database().to_string_lossy());
+    // Everything the server writes goes to its own folder: servers share the package folder.
+    set_str(&mut doc, &["mods"], "dir", &dirs.mods().to_string_lossy());
+    set_str(
+        &mut doc,
+        &["web"],
+        "config_backup_dir",
+        &dirs.config_backups().to_string_lossy(),
+    );
     // An admin's "restart" ends the process with code 75 and the launcher starts it again (on
     // every platform: host_run.rs). Older servers ignore the key (an unknown key is only warned
     // about by newer ones).
@@ -1106,6 +1261,87 @@ pub fn strip_ansi(line: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Dirs of server s1 under a made-up root (nothing is created).
+    fn test_dirs() -> HostDirs {
+        HostDirs::new(&Dirs::under(Path::new("/r")), "s1")
+    }
+
+    #[test]
+    fn server_ids_and_folders() {
+        assert!(valid_server_id("s1") && valid_server_id("s12"));
+        assert!(!valid_server_id("s") && !valid_server_id("x1") && !valid_server_id("s1/.."));
+        assert_eq!(new_server_id(&[]), "s1");
+        assert_eq!(new_server_id(&["s1".into(), "s3".into()]), "s2");
+        let d = test_dirs();
+        assert_eq!(d.settings_file(), Path::new("/r/config/servers/s1.json"));
+        assert_eq!(d.config(), Path::new("/r/data/servers/s1/server.toml"));
+        assert_eq!(d.packages(), Path::new("/r/data/server/packages"), "shared");
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = Dirs::under(tmp.path());
+        std::fs::create_dir_all(servers_config_dir(&dirs)).unwrap();
+        for f in ["s2.json", "s10.json", "s1.json", "s1.backup.json", "notes.txt"] {
+            std::fs::write(servers_config_dir(&dirs).join(f), "{}").unwrap();
+        }
+        assert_eq!(server_ids(&dirs), ["s1", "s2", "s10"]);
+    }
+
+    #[test]
+    fn new_servers_get_the_next_free_ports() {
+        let first = HostSettings::default();
+        assert_eq!(next_free_ports(&[], &|_| false).unwrap(), (20481, 6112, 8080));
+        assert_eq!(
+            next_free_ports(std::slice::from_ref(&first), &|_| false).unwrap(),
+            (20491, 6122, 8090)
+        );
+        // A port taken by another program moves the new server on too.
+        let busy = |s: &HostSettings| s.web_port == 8090;
+        assert_eq!(next_free_ports(std::slice::from_ref(&first), &busy).unwrap(), (20501, 6132, 8100));
+        let mut other = first.clone();
+        (other.login_port, other.instance_port, other.web_port) = (30000, 30001, 20491);
+        assert_eq!(first.port_clashes(&other), Vec::<u16>::new());
+        assert_eq!(next_free_ports(&[first, other], &|_| false).unwrap(), (20501, 6132, 8100));
+    }
+
+    #[test]
+    fn the_single_server_of_older_launchers_becomes_s1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = Dirs::under(tmp.path());
+        assert!(!migrate_single_server(&dirs).unwrap(), "nothing to move");
+        let pkg = dirs.data.join("server/packages/p");
+        std::fs::create_dir_all(pkg.join("config")).unwrap();
+        std::fs::write(pkg.join("config/server.toml"), "edited = true\n").unwrap();
+        std::fs::create_dir_all(dirs.data.join("server/data")).unwrap();
+        std::fs::write(dirs.data.join("server/data/server.sqlite"), "db").unwrap();
+        std::fs::write(dirs.data.join("server/server.log"), "log").unwrap();
+        std::fs::create_dir_all(&dirs.config).unwrap();
+        std::fs::write(dirs.config.join("backup.json"), r#"{"auto":true,"keep":3}"#).unwrap();
+        let old = HostSettings {
+            server_name: "Old".into(),
+            package_dir: Some(pkg.clone()),
+            configured: true,
+            ..Default::default()
+        };
+        old.save(&dirs.config.join("host.json")).unwrap();
+        assert!(migrate_single_server(&dirs).unwrap());
+        let d = HostDirs::new(&dirs, "s1");
+        assert_eq!(HostSettings::load(d.settings_file()).unwrap(), old);
+        assert_eq!(std::fs::read_to_string(d.database()).unwrap(), "db");
+        assert_eq!(std::fs::read_to_string(d.log_file()).unwrap(), "log");
+        assert_eq!(std::fs::read_to_string(d.config()).unwrap(), "edited = true\n");
+        assert!(d.backup_settings_file().is_file());
+        assert!(!dirs.config.join("host.json").exists());
+        assert!(!migrate_single_server(&dirs).unwrap(), "done once");
+    }
+
+    #[test]
+    fn package_folder_names_come_from_the_asset() {
+        assert_eq!(
+            package_name_of_asset("poe-server-v0.4.0-game-0.5.5e.hotfix1-linux-x86_64.tar.gz"),
+            Some("poe-server-v0.4.0-game-0.5.5e.hotfix1-linux-x86_64")
+        );
+        assert_eq!(package_name_of_asset("other.zip"), None);
+    }
+
     fn rel(tag: &str, pre: bool, names: &[&str]) -> GhRelease {
         GhRelease {
             tag_name: tag.into(),
@@ -1243,8 +1479,6 @@ mod tests {
         bad(&|s| s.public_host = "http://x".into());
         bad(&|s| s.public_host = "a b".into());
         bad(&|s| s.public_host = "x:80".into());
-        bad(&|s| s.admin_name = "ab".into());
-        bad(&|s| s.admin_name = "bad name".into());
         let mut s = HostSettings::default();
         for h in ["192.168.1.5", "play.example.com", "::1", "my-server"] {
             s.public_host = h.into();
@@ -1295,13 +1529,8 @@ path = "runtime/server.sqlite"
             open_registration: true,
             ..Default::default()
         };
-        let out = render_config(
-            EXAMPLE,
-            &s,
-            Path::new("/games/poe2"),
-            Path::new("/d/server.sqlite"),
-        )
-        .unwrap();
+        let dirs = test_dirs();
+        let out = render_config(EXAMPLE, &s, Path::new("/games/poe2"), &dirs).unwrap();
         let doc: toml_edit::DocumentMut = out.parse().unwrap();
         assert_eq!(doc["game"]["game_dir"].as_str(), Some("/games/poe2"));
         assert_eq!(doc["game"]["version"].as_str(), Some("0.5.5e.hotfix1"));
@@ -1329,7 +1558,16 @@ path = "runtime/server.sqlite"
         assert_eq!(doc["web"]["static_dir"].as_str(), Some("web-admin"));
         assert_eq!(doc["accounts"]["open_registration"].as_bool(), Some(true));
         assert_eq!(doc["accounts"]["name_prefix"].as_str(), Some("Exile"));
-        assert_eq!(doc["database"]["path"].as_str(), Some("/d/server.sqlite"));
+        assert_eq!(
+            doc["database"]["path"].as_str(),
+            Some(dirs.database().to_str().unwrap())
+        );
+        // What the server writes goes to its own folder (servers share the package folder).
+        assert_eq!(doc["mods"]["dir"].as_str(), Some(dirs.mods().to_str().unwrap()));
+        assert_eq!(
+            doc["web"]["config_backup_dir"].as_str(),
+            Some(dirs.config_backups().to_str().unwrap())
+        );
         assert_eq!(doc["server"]["restart_mode"].as_str(), Some("exit"));
         assert!(out.contains("# header comment") && out.contains("# trailing comment"));
 
@@ -1338,19 +1576,13 @@ path = "runtime/server.sqlite"
             web_public: false,
             ..s.clone()
         };
-        let out = render_config(EXAMPLE, &s2, Path::new("/g"), Path::new("/d")).unwrap();
+        let out = render_config(EXAMPLE, &s2, Path::new("/g"), &dirs).unwrap();
         assert!(out.contains("127.0.0.1:30080"));
     }
 
     #[test]
     fn a_config_without_the_tables_still_gets_them() {
-        let out = render_config(
-            "",
-            &HostSettings::default(),
-            Path::new("/g"),
-            Path::new("/d"),
-        )
-        .unwrap();
+        let out = render_config("", &HostSettings::default(), Path::new("/g"), &test_dirs()).unwrap();
         let doc: toml_edit::DocumentMut = out.parse().unwrap();
         assert_eq!(doc["web"]["bind"].as_str(), Some("127.0.0.1:8080"));
         assert_eq!(
@@ -1530,7 +1762,7 @@ id = "a"
             public_host: "203.0.113.9".into(),
             ..Default::default()
         };
-        let rendered = render_config(&out, &s, Path::new("/g"), Path::new("/d")).unwrap();
+        let rendered = render_config(&out, &s, Path::new("/g"), &test_dirs()).unwrap();
         let doc: DocumentMut = rendered.parse().unwrap();
         assert_eq!(doc["network"]["public_host"].as_str(), Some("203.0.113.9"));
         assert_eq!(doc["web"]["rate_limit"].as_integer(), Some(120));

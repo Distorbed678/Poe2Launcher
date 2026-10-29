@@ -5,7 +5,7 @@
  * second game version, `?official` starts in the official mode, `?empty` has no servers.
  * More switches: `?installing` (a running download with speed), `?paused`, `?lowspace`, `?offline`
  * (no news, no server list), `?nonews`, `?motd`, `?nolist`, `?nobackups`, `?nologs`, `?skipped`;
- * hosting: `?hostpkg` (a server is installed and set up), `?serverupdate` (the same, and a newer server release is on offer; `&serverrunning` runs it); mods: `?mods` (a cache with mods), `?modsync[=off|auto]` (server p1 requires two mods; Ask dialog at Play), `?offline` also affects the mod index.
+ * hosting: `?hostpkg` (a server is installed and set up; `&hosts=N` for N servers), `?serverupdate` (the same, and a newer server release is on offer; `&serverrunning` runs it); mods: `?mods` (a cache with mods), `?modsync[=off|auto]` (server p1 requires two mods; Ask dialog at Play), `?offline` also affects the mod index.
  */
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
@@ -77,6 +77,23 @@ export function installMock(params: URLSearchParams): void {
   // The hosted server: installed version (null: none) and whether it runs.
   let hostVersion: string | null = params.has('hostpkg') || params.has('serverupdate') ? '0.2.0' : null;
   let hostRunning = params.has('serverrunning');
+  // `?hosts=N`: N servers on this computer (default 1 when a package is installed).
+  let hostIds: string[] = Array.from({ length: Number(params.get('hosts') ?? (hostVersion ? 1 : 0)) }, (_, i) => `s${i + 1}`);
+  const hostNames: Record<string, string> = { s1: 'Weekend realm', s2: 'Test cluster', s3: 'Hardcore' };
+  const hostStatus = (id: string) => {
+    const n = Number(id.slice(1)) - 1;
+    const running = hostRunning && id === 's1';
+    const configured = hostVersion !== null && (id === 's1' || id === 's2');
+    return {
+      id,
+      settings: { server_name: hostNames[id] ?? `Server ${n + 1}`, cluster_id: 'main', login_port: 20481 + 10 * n, instance_port: 6112 + 10 * n, web_port: 8080 + 10 * n, public_host: '192.168.1.20', web_public: false, open_registration: true, autostart: id === 's1', package_dir: hostVersion ? hostPkg(hostVersion).dir : null, configured, profile_id: configured && id === 's1' ? 'p1' : null },
+      package: hostVersion ? hostPkg(hostVersion) : null, package_problem: null, platform: 'linux', game_version: current().version, game_installed: current().installed,
+      install_dir: status().install_dir, run: running ? { state: 'running', pid: 4242 } : { state: 'stopped' },
+      info: running ? { name: hostNames[id], version: current().version, cluster_id: 'main', online: 2, open_registration: true, login_host: '192.168.1.20', login_port: 20481, instance_port: 6112, gateway_region: null, uptime_secs: 11_520, motd: null, mods: [] } : null,
+      web_url: `http://127.0.0.1:${8080 + 10 * n}`, lan_ip: '192.168.1.20',
+      log_file: `/home/user/.local/share/poe2-launcher/servers/${id}/server.log`, folder: `/home/user/.local/share/poe2-launcher/servers/${id}`, busy: false, hosting_guide_url: 'https://example.invalid',
+    };
+  };
   const hostPkg = (v: string) => ({ dir: `/home/user/.local/share/poe2-launcher/server/packages/poe-server-v${v}-game-0.5.5e.hotfix1-linux-x86_64`, name: `poe-server-v${v}-game-0.5.5e.hotfix1-linux-x86_64`, server_version: v, game_version: '0.5.5e.hotfix1', platform: 'linux', commit: 'abc1234' });
   const hostRelease = () => ({
     repo: 'Distorbed678/Poe2Server', tag: 'server-v0.3.0', version: '0.3.0', game_version: '0.5.5e.hotfix1', prerelease: false,
@@ -242,7 +259,7 @@ export function installMock(params: URLSearchParams): void {
         case 'log_read': { const f = logFiles.find((x) => x.id === a.id); return { id: a.id, lines: f?.text ? logText(a.id as string) : [], truncated: false, size: f?.size ?? 0, binary: !f?.text }; }
         case 'log_report': return `Poe2 Launcher bug report\nlauncher: 0.2.0\nos: linux x86_64\ngame version: ${current().version} (installed)\nclient hook: 0.2.0 (mod ABI 1, commit abc1234)\nserver package: none\n\n--- ${a.id ?? 'no log'}: last 5 lines ---\n${logText(String(a.id)).slice(-5).join('\n')}`;
         case 'log_open_folder': return null;
-        case 'backup_status': return { dir: '/home/user/.local/share/poe2-launcher/server/backups', backups, settings: backupSettings, database_size: 3_145_728, server_running: false };
+        case 'backup_status': return { dir: '/home/user/.local/share/poe2-launcher/servers/s1/backups', backups, settings: backupSettings, database_size: 3_145_728, server_running: false };
         case 'backup_create': { const b: BackupInfo = { name: `server-${now}-manual.sqlite`, kind: 'manual', created: now, size: 3_150_000 }; backups = [b, ...backups]; return b; }
         case 'backup_restore': return { name: 'server-pre.sqlite', kind: 'pre-restore', created: now, size: 3_150_000 };
         case 'backup_delete': backups = backups.filter((b) => b.name !== a.name); return null;
@@ -272,15 +289,18 @@ export function installMock(params: URLSearchParams): void {
         case 'hook_status': return hookStatus();
         case 'hook_check': return { release: hookRelease(), update_available: hookVersion !== '0.2.0' };
         case 'hook_install_latest': hookVersion = '0.2.0'; return { hook: hookPkg('0.2.0'), sha256: 'f'.repeat(64), source: 'download' };
-        case 'host_status': return {
-          settings: { server_name: 'My private realm', cluster_id: 'my-cluster', login_port: 20481, instance_port: 6112, web_port: 8080, public_host: '192.168.1.20', web_public: false, open_registration: true, admin_name: 'admin', autostart: false, package_dir: hostVersion ? hostPkg(hostVersion).dir : null, configured: hostVersion !== null, profile_id: hostVersion ? 'p1' : null },
-          package: hostVersion ? hostPkg(hostVersion) : null, package_problem: null, platform: 'linux', game_version: current().version, game_installed: current().installed,
-          install_dir: status().install_dir, run: hostRunning ? { state: 'running', pid: 4242 } : { state: 'stopped' }, info: null, web_url: 'http://127.0.0.1:8080', lan_ip: '192.168.1.20',
-          log_file: '/home/user/.local/share/poe2-launcher/server/server.log', busy: false, hosting_guide_url: 'https://example.invalid',
-        };
+        case 'host_list': return hostIds.map(hostStatus);
+        case 'host_status': return hostStatus(a.id as string);
+        case 'host_create': { const id = `s${hostIds.length + 1}`; hostIds = [...hostIds, id]; hostNames[id] = a.name as string; return id; }
+        case 'host_delete': hostIds = hostIds.filter((x) => x !== a.id); return null;
+        case 'host_metrics': return hostRunning && a.id === 's1'
+          ? { cpu_pct: 6.2, rss_bytes: 431_000_000, cpu_history: [3, 4, 3, 6, 5, 8, 7, 6, 9, 6], rss_history: [400e6, 405e6, 410e6, 415e6, 420e6, 431e6], tick_avg_ms: 4.1, tick_max_ms: 9.8, net_in_bps: 12_300, net_out_bps: 26_400, players: 2, uptime_secs: 11_520, server_metrics: true }
+          : { cpu_pct: null, rss_bytes: null, cpu_history: [], rss_history: [], tick_avg_ms: null, tick_max_ms: null, net_in_bps: null, net_out_bps: null, players: null, uptime_secs: null, server_metrics: false };
+        case 'host_setup': return { profile: profiles[0], config_file: '/home/user/.local/share/poe2-launcher/servers/s1/server.toml' };
+        case 'host_web_admin_open': case 'register_page_open': return null;
         case 'host_update_check': return { installed: hostVersion, release: hostVersion ? hostRelease() : null, update_available: hostVersion !== null && hostVersion !== '0.3.0' && params.has('serverupdate'), error: null, checked_at: now };
         case 'host_update_apply': { const from = hostVersion ?? '0.2.0'; hostVersion = '0.3.0'; return { updated: true, from, to: '0.3.0', package: hostPkg('0.3.0'), was_running: hostRunning, restarted: hostRunning, backup: 'server-20261022-134501-pre-update.sqlite', sha256: 'e'.repeat(64) }; }
-        case 'host_log_tail': return [];
+        case 'host_log_tail': return hostRunning && a.id === 's1' ? ['14:05:02 INFO login server listening addr=0.0.0.0:20481', '14:05:02 INFO instance server listening addr=0.0.0.0:6112', '[launcher] backup before start: server-20261030-140501-auto.sqlite (3.1 MB)', '14:06:40 INFO Distorbed logged in', '14:21:13 WARN slow frame 41 ms (area G1_2)', '14:22:01 INFO generated terrain for G1_3 in 812 ms'] : [];
         case 'plugin:updater|check': return null;
         case 'plugin:dialog|open': return null;
         default: return null;

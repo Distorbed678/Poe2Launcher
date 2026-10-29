@@ -59,9 +59,24 @@ struct Inner {
 /// One hosted server process at a time.
 #[derive(Clone, Default)]
 pub struct HostRuntime {
+    /// The hosted server's id; sent with every event.
+    id: String,
     inner: Arc<Mutex<Inner>>,
     log: Arc<Mutex<VecDeque<String>>>,
+    usage: Arc<Mutex<Usage>>,
 }
+
+/// The last CPU and memory readings of the process (Manage > Overview charts).
+#[derive(Default)]
+struct Usage {
+    /// The previous CPU time reading: (when, process ticks).
+    last: Option<(Instant, u64)>,
+    cpu: VecDeque<f32>,
+    rss: VecDeque<u64>,
+}
+
+/// Readings kept for the small charts.
+pub const USAGE_POINTS: usize = 60;
 
 /// Exit code of `poe-server` after an admin's restart request when its config has
 /// `[server] restart_mode = "exit"` (`poe_config::RESTART_EXIT_CODE` in Poe2ModdingProject, a
@@ -123,7 +138,7 @@ pub struct StartSpec {
     pub exe: PathBuf,
     /// The package folder; the server's working directory.
     pub cwd: PathBuf,
-    /// `POE_CONFIG`, relative to `cwd`.
+    /// `POE_CONFIG` (absolute: the config lives in the server's own folder).
     pub config: PathBuf,
     /// The log file (truncated at each start).
     pub log_file: PathBuf,
@@ -132,6 +147,66 @@ pub struct StartSpec {
 impl HostRuntime {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The runtime of the hosted server `id`.
+    pub fn for_server(id: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            ..Self::default()
+        }
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// CPU (percent of one core since the previous call; `None` the first time) and resident
+    /// memory of process `pid`. Linux only (`/proc`); `None` elsewhere.
+    pub fn probe_usage(&self, pid: u32) -> Option<(Option<f32>, u64)> {
+        let (ticks, rss) = read_proc_usage(pid)?;
+        let now = Instant::now();
+        let mut u = self.usage.lock().unwrap();
+        let cpu = match u.last.replace((now, ticks)) {
+            Some((t0, c0)) if ticks >= c0 => {
+                let secs = now.duration_since(t0).as_secs_f64();
+                (secs > 0.05).then(|| ((ticks - c0) as f64 / CLOCK_TICKS / secs * 100.0) as f32)
+            }
+            _ => None,
+        };
+        Some((cpu, rss))
+    }
+
+    /// Adds a reading to the chart history.
+    pub fn record_usage(&self, cpu: Option<f32>, rss: Option<u64>) {
+        let mut u = self.usage.lock().unwrap();
+        if let Some(c) = cpu {
+            if u.cpu.len() >= USAGE_POINTS {
+                u.cpu.pop_front();
+            }
+            u.cpu.push_back(c);
+        }
+        if let Some(r) = rss {
+            if u.rss.len() >= USAGE_POINTS {
+                u.rss.pop_front();
+            }
+            u.rss.push_back(r);
+        }
+    }
+
+    /// The chart history (oldest first).
+    pub fn usage_history(&self) -> (Vec<f32>, Vec<u64>) {
+        let u = self.usage.lock().unwrap();
+        (u.cpu.iter().copied().collect(), u.rss.iter().copied().collect())
+    }
+
+    /// Drops the launcher's "autostart failed" notes from the log tail (a new package fixed
+    /// what they were about).
+    pub fn forget_failed_starts(&self) {
+        self.log
+            .lock()
+            .unwrap()
+            .retain(|l| !l.starts_with("[launcher] autostart failed"));
     }
 
     pub fn state(&self) -> RunState {
@@ -168,7 +243,7 @@ impl HostRuntime {
             }
             g.push_back(line.clone());
         }
-        events.emit("host:log", json!({ "line": line }));
+        events.emit("host:log", json!({ "id": self.id, "line": line }));
     }
 
     /// Adds a line the launcher itself wants in the log (not from the server).
@@ -178,7 +253,7 @@ impl HostRuntime {
 
     fn set_state(&self, events: &dyn Events, s: RunState) {
         self.inner.lock().unwrap().state = Some(s.clone());
-        events.emit("host:status", serde_json::to_value(&s).unwrap_or_default());
+        events.emit("host:status", json!({ "id": self.id, "run": s }));
     }
 
     /// Starts the server. Returns once the process exists; whether it is serving is for the
@@ -201,6 +276,7 @@ impl HostRuntime {
                 .with_context(|| format!("creating {}", spec.log_file.display()))?,
         ));
         self.log.lock().unwrap().clear();
+        *self.usage.lock().unwrap() = Usage::default();
 
         let mut child = spawn_child(spec)?;
         let pid = child.id().context("the server ended at once")?;
@@ -514,7 +590,7 @@ mod tests {
         assert!(ev.iter().any(|(n, _)| n == "host:log"));
         assert!(
             ev.iter()
-                .any(|(n, v)| n == "host:status" && v["state"] == "stopped")
+                .any(|(n, v)| n == "host:status" && v["run"]["state"] == "stopped")
         );
     }
 
@@ -686,12 +762,12 @@ mod tests {
             let ev = events.0.lock().unwrap();
             let running = ev
                 .iter()
-                .filter(|(n, v)| n == "host:status" && v["state"] == "running")
+                .filter(|(n, v)| n == "host:status" && v["run"]["state"] == "running")
                 .count();
             assert_eq!(running, 2, "Running is announced again with the new pid");
             assert!(
                 !ev.iter()
-                    .any(|(n, v)| n == "host:status" && v["state"] == "exited")
+                    .any(|(n, v)| n == "host:status" && v["run"]["state"] == "exited")
             );
         }
         // The log file continues in one file.
@@ -766,5 +842,58 @@ mod tests {
         rt.start(Arc::new(NullEvents), &spec1).unwrap();
         wait_for(&rt, |s| matches!(s, RunState::Exited { .. })).await;
         assert_eq!(rt.state(), RunState::Exited { code: Some(1) });
+    }
+}
+
+/// `USER_HZ` of `/proc/<pid>/stat` (100 on every Linux platform in practice).
+const CLOCK_TICKS: f64 = 100.0;
+
+/// (`utime + stime` in ticks, resident memory in bytes) of process `pid` from `/proc`.
+fn read_proc_usage(pid: u32) -> Option<(u64, u64)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    Some((parse_stat_ticks(&stat)?, parse_status_rss(&status)?))
+}
+
+/// `utime + stime` (fields 14 and 15) of a `/proc/<pid>/stat` line; the name in parentheses may
+/// hold spaces, so the fields are counted after its closing parenthesis.
+pub fn parse_stat_ticks(text: &str) -> Option<u64> {
+    let rest = &text[text.rfind(')')? + 1..];
+    let f: Vec<&str> = rest.split_whitespace().collect();
+    // After ")" the first field is the state (field 3): utime is field 14, stime field 15.
+    Some(f.get(11)?.parse::<u64>().ok()? + f.get(12)?.parse::<u64>().ok()?)
+}
+
+/// `VmRSS` of a `/proc/<pid>/status` text, in bytes.
+pub fn parse_status_rss(text: &str) -> Option<u64> {
+    let line = text.lines().find(|l| l.starts_with("VmRSS:"))?;
+    Some(line.split_whitespace().nth(1)?.parse::<u64>().ok()? * 1024)
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+
+    #[test]
+    fn proc_fields_are_read() {
+        let stat = "1234 (poe server) S 1 1234 1234 0 -1 4194560 100 0 0 0 250 50 0 0 20 0 9 0 1 2 3";
+        assert_eq!(parse_stat_ticks(stat), Some(300));
+        assert_eq!(parse_status_rss("Name:\tx\nVmRSS:\t  2048 kB\n"), Some(2 * 1024 * 1024));
+        assert_eq!(parse_status_rss("Name: x"), None);
+    }
+
+    #[test]
+    fn history_is_bounded_and_failed_starts_are_forgotten() {
+        let rt = HostRuntime::for_server("s1");
+        for i in 0..(USAGE_POINTS + 5) {
+            rt.record_usage(Some(i as f32), Some(i as u64));
+        }
+        let (c, r) = rt.usage_history();
+        assert_eq!((c.len(), r.len()), (USAGE_POINTS, USAGE_POINTS));
+        assert_eq!(c[0], 5.0);
+        rt.log.lock().unwrap().push_back("[launcher] autostart failed: old".into());
+        rt.log.lock().unwrap().push_back("server line".into());
+        rt.forget_failed_starts();
+        assert_eq!(rt.tail(10), ["server line"]);
     }
 }

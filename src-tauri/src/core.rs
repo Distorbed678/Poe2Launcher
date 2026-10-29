@@ -178,8 +178,8 @@ pub struct Core {
     install: Mutex<Option<InstallControl>>,
     paused: Mutex<Option<PausedInstall>>,
     play: Mutex<PlayState>,
-    /// The hosted `poe-server` process (see `host_ops.rs`).
-    pub host: HostRuntime,
+    /// The hosted `poe-server` processes by server id (see `host_ops.rs`).
+    pub hosts: Mutex<std::collections::HashMap<String, HostRuntime>>,
     /// Set while the host page downloads, installs or sets up: one such job at a time.
     pub(crate) host_busy: Mutex<bool>,
     /// Set while the client hook is downloaded and installed.
@@ -192,6 +192,10 @@ impl Core {
         tokens: Arc<dyn TokenStore>,
         events: Arc<dyn Events>,
     ) -> Result<Arc<Self>> {
+        // The single hosted server of launchers before 0.6.0 becomes server s1.
+        if let Err(e) = crate::host::migrate_single_server(&dirs) {
+            eprintln!("moving the hosted server to its new folder failed: {e:#}");
+        }
         Ok(Arc::new(Self {
             dirs,
             tokens,
@@ -199,7 +203,7 @@ impl Core {
             install: Mutex::new(None),
             paused: Mutex::new(None),
             play: Mutex::new(PlayState::Idle),
-            host: HostRuntime::new(),
+            hosts: Mutex::new(std::collections::HashMap::new()),
             host_busy: Mutex::new(false),
             hook_busy: Mutex::new(false),
         }))
@@ -288,11 +292,8 @@ impl Core {
         ) {
             bail!("cannot {what} while the game is starting or running");
         }
-        if matches!(
-            self.host.state(),
-            crate::host_run::RunState::Running { .. } | crate::host_run::RunState::Stopping { .. }
-        ) {
-            bail!("cannot {what} while the hosted server is running");
+        if !self.running_hosts().is_empty() {
+            bail!("cannot {what} while a hosted server is running");
         }
         Ok(())
     }
@@ -501,6 +502,32 @@ impl Core {
         let url = self.web_admin_link(id).await?;
         opener
             .open(&url)
+            .map_err(|e| anyhow!("could not open the browser: {e:#}"))
+    }
+
+    /// The server's own page for new accounts (`<address>/#/register` of its web admin), opened
+    /// in the system browser. Accounts are made there, not in the launcher.
+    pub fn register_page_open(&self, id: &str, opener: &dyn UrlOpener) -> Result<()> {
+        let p = self.profile_store().get(id)?;
+        opener
+            .open(&format!("{}/#/register", p.url.trim_end_matches('/')))
+            .map_err(|e| anyhow!("could not open the browser: {e:#}"))
+    }
+
+    /// "Open web admin" of a server hosted here: signed in when its Servers entry is logged in
+    /// as an admin, else the plain address (the web admin shows its login, or on a new server
+    /// the page that creates the first admin).
+    pub async fn host_web_admin_open(&self, id: &str, opener: &dyn UrlOpener) -> Result<()> {
+        let s = self.host_settings(id)?;
+        if let Some(pid) = &s.profile_id
+            && let Some(p) = self.profiles()?.into_iter().find(|p| &p.id == pid)
+            && p.logged_in
+            && p.role.as_deref() == Some("admin")
+        {
+            return self.web_admin_open(pid, opener).await;
+        }
+        opener
+            .open(&format!("{}/", crate::host::local_web_url(&s)))
             .map_err(|e| anyhow!("could not open the browser: {e:#}"))
     }
 

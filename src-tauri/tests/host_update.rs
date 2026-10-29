@@ -232,6 +232,8 @@ struct Env {
     tmp: tempfile::TempDir,
     core: Arc<Core>,
     events: Arc<Collector>,
+    /// The hosted server of the test.
+    id: String,
 }
 
 fn env() -> Env {
@@ -253,7 +255,13 @@ fn env() -> Env {
         ..Default::default()
     })
     .unwrap();
-    Env { tmp, core, events }
+    let id = core.host_create("Test").unwrap();
+    Env {
+        tmp,
+        core,
+        events,
+        id,
+    }
 }
 
 fn tuning() -> UpdateTuning {
@@ -270,8 +278,18 @@ fn free_ports(n: usize) -> Vec<u16> {
 }
 
 impl Env {
+    /// The server's own folder.
+    fn folder(&self) -> PathBuf {
+        self.tmp.path().join("data/servers").join(&self.id)
+    }
+
+    /// The server's config.
+    fn cfg(&self) -> PathBuf {
+        self.folder().join("server.toml")
+    }
+
     fn db(&self) -> PathBuf {
-        self.tmp.path().join("data/server/data/server.sqlite")
+        self.folder().join("data/server.sqlite")
     }
 
     /// Installs `archive` as the server, sets it up (config written) and makes a real database
@@ -282,21 +300,22 @@ impl Env {
         std::fs::write(&file, archive).unwrap();
         let out = self
             .core
-            .host_install_local(file.to_str().unwrap())
+            .host_install_local(&self.id, file.to_str().unwrap())
             .await
             .unwrap();
         let ports = free_ports(3);
         self.core
-            .host_setup(SetupRequest {
-                settings: HostSettings {
-                    login_port: ports[0],
-                    instance_port: ports[1],
-                    web_port: ports[2],
-                    admin_name: "boss".into(),
-                    ..Default::default()
+            .host_setup(
+                &self.id,
+                SetupRequest {
+                    settings: HostSettings {
+                        login_port: ports[0],
+                        instance_port: ports[1],
+                        web_port: ports[2],
+                        ..Default::default()
+                    },
                 },
-                admin_password: "long-enough-pw".into(),
-            })
+            )
             .await
             .unwrap();
         std::fs::create_dir_all(self.db().parent().unwrap()).unwrap();
@@ -326,7 +345,7 @@ impl Env {
     }
 
     fn backups(&self) -> Vec<String> {
-        poe2_launcher_lib::backup::list(&self.tmp.path().join("data/server/backups"))
+        poe2_launcher_lib::backup::list(&self.folder().join("backups"))
             .unwrap()
             .into_iter()
             .map(|b| b.kind)
@@ -366,15 +385,15 @@ async fn a_running_server_is_updated_with_its_config_kept_and_started_again() {
         .install_and_setup(&package("0.1.0", false, &running_exe("0.1.0"), OLD_EXAMPLE))
         .await;
     // The user changed a setting by hand (the web admin's config editor does the same).
-    let cfg = old_pkg.join("config/server.toml");
+    let cfg = e.cfg();
     let text = std::fs::read_to_string(&cfg).unwrap();
     assert!(text.contains("rate_limit = 60"));
     std::fs::write(&cfg, text.replace("rate_limit = 60", "rate_limit = 77")).unwrap();
-    e.core.host_start().await.unwrap();
-    assert!(e.core.host.is_running());
+    e.core.host_start(&e.id).await.unwrap();
+    assert!(e.core.runtime(&e.id).is_running());
 
     // The check is quiet and tells what is on offer.
-    let check = e.core.host_update_check_at(&api).await;
+    let check = e.core.host_update_check_at(&e.id, &api).await;
     assert!(check.update_available, "{check:?}");
     assert_eq!(check.installed.as_deref(), Some("0.1.0"));
     let r = check.release.unwrap();
@@ -385,12 +404,12 @@ async fn a_running_server_is_updated_with_its_config_kept_and_started_again() {
             .unwrap()
             .ends_with("/Poe2Server/releases/tag/server-v0.2.0")
     );
-    assert!(e.core.host.is_running(), "a check changes nothing");
+    assert!(e.core.runtime(&e.id).is_running(), "a check changes nothing");
     assert_eq!(mock.list_hits.load(Ordering::SeqCst), 1);
 
     let out = e
         .core
-        .host_update_apply_with(&api, &tuning())
+        .host_update_apply_with(&e.id, &api, &tuning())
         .await
         .unwrap();
     assert!(out.updated && out.was_running && out.restarted);
@@ -405,17 +424,17 @@ async fn a_running_server_is_updated_with_its_config_kept_and_started_again() {
     let new_pkg = out.package.dir.clone();
     assert_eq!(e.package_dirs(), [pkg_name("0.2.0")]);
     assert_eq!(
-        e.core.host_settings().unwrap().package_dir.as_deref(),
+        e.core.host_settings(&e.id).unwrap().package_dir.as_deref(),
         Some(new_pkg.as_path())
     );
-    assert!(e.core.host.is_running());
+    assert!(e.core.runtime(&e.id).is_running());
     assert_eq!(started_after(&new_pkg, 1).await, ["0.2.0"]);
     assert!(!old_pkg.exists());
 
     // The config: the user's value kept, the new release's keys with their defaults, the
     // wizard's answers in place.
     let new_cfg: toml_edit::DocumentMut =
-        std::fs::read_to_string(new_pkg.join("config/server.toml"))
+        std::fs::read_to_string(e.cfg())
             .unwrap()
             .parse()
             .unwrap();
@@ -446,14 +465,14 @@ async fn a_running_server_is_updated_with_its_config_kept_and_started_again() {
     // Nothing newer now: a second apply touches nothing.
     let again = e
         .core
-        .host_update_apply_with(&api, &tuning())
+        .host_update_apply_with(&e.id, &api, &tuning())
         .await
         .unwrap();
     assert!(!again.updated);
     assert_eq!(started(&new_pkg), ["0.2.0"]);
-    let check = e.core.host_update_check_at(&api).await;
+    let check = e.core.host_update_check_at(&e.id, &api).await;
     assert!(!check.update_available);
-    e.core.host_stop().await.unwrap();
+    e.core.host_stop(&e.id).await.unwrap();
 }
 
 #[tokio::test]
@@ -469,12 +488,12 @@ async fn a_new_server_that_does_not_come_up_is_rolled_back() {
     let old_pkg = e
         .install_and_setup(&package("0.1.0", false, &running_exe("0.1.0"), OLD_EXAMPLE))
         .await;
-    let old_cfg = std::fs::read_to_string(old_pkg.join("config/server.toml")).unwrap();
-    e.core.host_start().await.unwrap();
+    let old_cfg = std::fs::read_to_string(e.cfg()).unwrap();
+    e.core.host_start(&e.id).await.unwrap();
 
     let err = e
         .core
-        .host_update_apply_with(&api, &tuning())
+        .host_update_apply_with(&e.id, &api, &tuning())
         .await
         .unwrap_err()
         .to_string();
@@ -486,23 +505,23 @@ async fn a_new_server_that_does_not_come_up_is_rolled_back() {
     // (the crashing server had overwritten it).
     assert_eq!(e.package_dirs(), [pkg_name("0.1.0")]);
     assert_eq!(
-        e.core.host_settings().unwrap().package_dir.as_deref(),
+        e.core.host_settings(&e.id).unwrap().package_dir.as_deref(),
         Some(old_pkg.as_path())
     );
     assert_eq!(
-        std::fs::read_to_string(old_pkg.join("config/server.toml")).unwrap(),
+        std::fs::read_to_string(e.cfg()).unwrap(),
         old_cfg
     );
-    assert!(e.core.host.is_running());
+    assert!(e.core.runtime(&e.id).is_running());
     assert_eq!(started_after(&old_pkg, 2).await, ["0.1.0", "0.1.0"]);
     assert_eq!(e.rows(), 1);
-    assert!(!e.core.host_status().await.unwrap().busy);
+    assert!(!e.core.host_status(&e.id).await.unwrap().busy);
     let kinds = e.backups();
     assert!(
         kinds.contains(&"pre-update".to_owned()) && kinds.contains(&"pre-restore".to_owned()),
         "{kinds:?}"
     );
-    e.core.host_stop().await.unwrap();
+    e.core.host_stop(&e.id).await.unwrap();
 }
 
 #[tokio::test]
@@ -517,20 +536,20 @@ async fn a_bad_download_changes_nothing_and_the_server_keeps_running() {
     let old_pkg = e
         .install_and_setup(&package("0.1.0", false, &running_exe("0.1.0"), OLD_EXAMPLE))
         .await;
-    e.core.host_start().await.unwrap();
+    e.core.host_start(&e.id).await.unwrap();
     let err = e
         .core
-        .host_update_apply_with(&api, &tuning())
+        .host_update_apply_with(&e.id, &api, &tuning())
         .await
         .unwrap_err()
         .to_string();
     assert!(err.contains("does not match its checksum"), "{err}");
-    assert!(e.core.host.is_running(), "the old server was never stopped");
+    assert!(e.core.runtime(&e.id).is_running(), "the old server was never stopped");
     assert_eq!(started_after(&old_pkg, 1).await, ["0.1.0"]);
     assert_eq!(e.package_dirs(), [pkg_name("0.1.0")]);
     assert!(e.backups().is_empty());
-    assert!(!e.core.host_status().await.unwrap().busy);
-    e.core.host_stop().await.unwrap();
+    assert!(!e.core.host_status(&e.id).await.unwrap().busy);
+    e.core.host_stop(&e.id).await.unwrap();
 }
 
 #[tokio::test]
@@ -545,11 +564,11 @@ async fn a_failed_backup_stops_the_update_before_anything_is_replaced() {
         .install_and_setup(&package("0.1.0", false, &running_exe("0.1.0"), OLD_EXAMPLE))
         .await;
     // A file where the backup folder should be: the backup cannot be made.
-    std::fs::write(e.tmp.path().join("data/server/backups"), b"in the way").unwrap();
-    e.core.host_start().await.unwrap();
+    std::fs::write(e.folder().join("backups"), b"in the way").unwrap();
+    e.core.host_start(&e.id).await.unwrap();
     let err = e
         .core
-        .host_update_apply_with(&api, &tuning())
+        .host_update_apply_with(&e.id, &api, &tuning())
         .await
         .unwrap_err()
         .to_string();
@@ -558,17 +577,17 @@ async fn a_failed_backup_stops_the_update_before_anything_is_replaced() {
         "{err}"
     );
     assert_eq!(e.package_dirs(), [pkg_name("0.1.0")]);
-    assert!(e.core.host.is_running());
+    assert!(e.core.runtime(&e.id).is_running());
     assert_eq!(
         started_after(&old_pkg, 2).await,
         ["0.1.0", "0.1.0"],
         "stopped, then started again"
     );
     assert_eq!(
-        e.core.host_settings().unwrap().package_dir.as_deref(),
+        e.core.host_settings(&e.id).unwrap().package_dir.as_deref(),
         Some(old_pkg.as_path())
     );
-    e.core.host_stop().await.unwrap();
+    e.core.host_stop(&e.id).await.unwrap();
 }
 
 /// Poe2Server has no release that fits (404): the two old releases in Poe2ModdingProject are
@@ -589,7 +608,7 @@ async fn the_fallback_repository_and_both_layouts_work_for_a_stopped_server() {
     let old_pkg = e
         .install_and_setup(&package("0.1.0", true, &running_exe("0.1.0"), OLD_EXAMPLE))
         .await;
-    let check = e.core.host_update_check_at(&api).await;
+    let check = e.core.host_update_check_at(&e.id, &api).await;
     assert!(check.update_available, "{check:?}");
     assert_eq!(check.release.unwrap().repo, FALLBACK_REPO);
     assert_eq!(
@@ -600,15 +619,15 @@ async fn the_fallback_repository_and_both_layouts_work_for_a_stopped_server() {
 
     let out = e
         .core
-        .host_update_apply_with(&api, &tuning())
+        .host_update_apply_with(&e.id, &api, &tuning())
         .await
         .unwrap();
     assert!(out.updated && !out.was_running && !out.restarted);
     assert_eq!(e.package_dirs(), [pkg_name("0.2.0")]);
     assert!(!old_pkg.exists());
-    assert!(!e.core.host.is_running(), "a stopped server stays stopped");
+    assert!(!e.core.runtime(&e.id).is_running(), "a stopped server stays stopped");
     assert!(out.package.dir.join("versions/0.5.5e.hotfix1.toml").is_file());
-    let cfg = std::fs::read_to_string(out.package.dir.join("config/server.toml")).unwrap();
+    let cfg = std::fs::read_to_string(e.cfg()).unwrap();
     assert!(cfg.contains("cors = \"none\""));
 
     // Poe2Server answering with a release wins over the fallback.
@@ -620,7 +639,7 @@ async fn the_fallback_repository_and_both_layouts_work_for_a_stopped_server() {
         .lock()
         .unwrap()
         .insert(repo_name(REPO).into(), Repo::Releases(vec![newer]));
-    let check = e.core.host_update_check_at(&api).await;
+    let check = e.core.host_update_check_at(&e.id, &api).await;
     let r = check.release.unwrap();
     assert_eq!((r.version.as_str(), r.repo.as_str()), ("0.3.0", REPO));
 }
@@ -629,12 +648,12 @@ async fn the_fallback_repository_and_both_layouts_work_for_a_stopped_server() {
 async fn nothing_is_asked_of_github_without_an_installed_server() {
     let (api, mock) = spawn_mock(vec![]).await;
     let e = env();
-    let check = e.core.host_update_check_at(&api).await;
+    let check = e.core.host_update_check_at(&e.id, &api).await;
     assert!(!check.update_available && check.installed.is_none() && check.error.is_none());
     assert_eq!(mock.list_hits.load(Ordering::SeqCst), 0);
     let err = e
         .core
-        .host_update_apply_with(&api, &tuning())
+        .host_update_apply_with(&e.id, &api, &tuning())
         .await
         .unwrap_err()
         .to_string();
@@ -644,7 +663,7 @@ async fn nothing_is_asked_of_github_without_an_installed_server() {
     let _ = e
         .install_and_setup(&package("0.1.0", true, &running_exe("0.1.0"), OLD_EXAMPLE))
         .await;
-    let check = e.core.host_update_check_at("http://127.0.0.1:1").await;
+    let check = e.core.host_update_check_at(&e.id, "http://127.0.0.1:1").await;
     assert!(!check.update_available);
     assert_eq!(check.installed.as_deref(), Some("0.1.0"));
     assert!(

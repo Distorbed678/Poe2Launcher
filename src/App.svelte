@@ -21,7 +21,6 @@
   import News from './pages/News.svelte';
   import Library from './pages/Library.svelte';
   import Settings from './pages/Settings.svelte';
-  import About from './pages/About.svelte';
 
   interface NavItem { page: string; label: string; icon: IconName; official: boolean }
   const nav: NavItem[] = [
@@ -32,8 +31,8 @@
     { page: 'settings', label: 'Settings', icon: 'settings', official: true },
   ];
   const visible = $derived(nav.filter((n) => !app.official || n.official));
-  // About is not in the sidebar: it is the small link at its foot (and in Settings).
-  const page = $derived(router.page === 'about' || visible.some((n) => n.page === router.page) ? router.page : 'home');
+  // About lives in Settings (Updates & About); the old #/about link still opens it.
+  const page = $derived(visible.some((n) => n.page === router.page) ? router.page : 'home');
   const landing = 'home';
 
   let maximized = $state(false);
@@ -117,12 +116,7 @@
         </div>
       {/if}
       <div class="side-foot">
-        {#if !app.official && app.selected?.logged_in}
-          <span class="who" title="Signed in on {app.selected.name}"><Icon name="account" size={13} /> <span class="label">{app.selected.account}</span></span>
-        {:else}<span></span>{/if}
-        <a class="about-link" href="#/about" aria-current={page === 'about' ? 'page' : undefined}>
-          <span class="label">About{app.info?.launcher_version ? ` · v${app.info.launcher_version}` : ''}</span>
-        </a>
+        <span class="ver label">Launcher{app.info?.launcher_version ? ` v${app.info.launcher_version}` : ''}</span>
       </div>
     </nav>
     <main id="main" tabindex="-1" class:play-main={page === 'home'}>
@@ -139,8 +133,6 @@
               <News />
             {:else if page === 'library'}
               <Library />
-            {:else if page === 'about'}
-              <About />
             {:else}
               <Settings />
             {/if}

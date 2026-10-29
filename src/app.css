@@ -295,11 +295,7 @@ tbody tr:hover { background: color-mix(in srgb, var(--surface-2) 70%, transparen
 .side-card { margin-bottom: 8px; padding: 10px; border-radius: var(--radius); background: var(--bg-2); border: 1px solid var(--line); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
 .side-card.official { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
 .side-card strong { display: flex; align-items: center; gap: 6px; }
-.side-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; border-top: 1px solid var(--line); padding: 10px 4px 0; font-size: 11.5px; color: var(--muted); }
-.side-foot .who { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.side a.about-link { padding: 2px 4px; font-size: 11.5px; color: var(--faint); }
-.side a.about-link:hover { background: none; color: var(--text); }
-.side a.about-link[aria-current='page'] { background: none; box-shadow: none; color: var(--gold-2); }
+.side-foot { display: flex; align-items: center; justify-content: flex-end; border-top: 1px solid var(--line); padding: 10px 4px 0; font-size: 11px; color: var(--faint); letter-spacing: 0.02em; }
 
 main { position: relative; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 36px 32px 28px; }
 main:focus { outline: none; }
@@ -391,7 +387,7 @@ dialog.modal::backdrop { background: rgb(5 2 2 / 0.65); animation: fade-in var(-
   .body { grid-template-columns: 64px minmax(0, 1fr); }
   .side { padding: 14px 8px 10px; }
   .side a { justify-content: center; padding: 10px 0; }
-  .side a span.label, .brand-text, .side-card, .side-foot .who, .vt-text, .nav-badge { display: none; }
+  .side a span.label, .brand-text, .side-card, .side-foot .ver, .vt-text, .nav-badge { display: none; }
   .dd.attached .dd-trigger { justify-content: center; padding: 0; }
   .dd.attached .dd-trigger > .icon:last-child { display: none; }
   .dd.attached .dd-menu { width: 220px; right: auto; border-radius: 0 var(--radius) var(--radius) var(--radius); }
@@ -421,3 +417,9 @@ dialog.modal::backdrop { background: rgb(5 2 2 / 0.65); animation: fade-in var(-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; animation-delay: 0ms !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
 }
+
+/* Pill choices (theme, mod sync): a small group of rounded buttons, one of them on. */
+.pills { display: inline-flex; flex-wrap: wrap; gap: var(--sp-2); }
+.pills button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 14px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: none; color: var(--muted); font: 500 var(--fs-sm) / 1.4 var(--font); cursor: pointer; transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease), background var(--dur) var(--ease); }
+.pills button:hover { color: var(--text); border-color: color-mix(in srgb, var(--gold) 40%, var(--line)); }
+.pills button.on { border-color: var(--gold); color: var(--gold-2); background: color-mix(in srgb, var(--gold) 8%, transparent); }

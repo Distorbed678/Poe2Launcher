@@ -6,6 +6,7 @@
   import { run } from '../lib/notify.svelte';
   import { ask } from '../lib/confirm.svelte';
   import { DUR, ease, ms } from '../lib/motion';
+  import { listenHost } from '../lib/events';
   import { needsPlainHttpConfirmation, normalizeServerUrl, plainHttpRisk, plainHttpWarning } from '../lib/url';
   import { formatUptime } from '../lib/format';
   import { serverCompat, versionLabel } from '../lib/gameversion';
@@ -24,61 +25,125 @@
   import HostPanel from '../lib/ui/HostPanel.svelte';
   import type { HostStatus, ProfileView as Profile } from '../lib/types';
 
-  // Servers: the ones you saved, the one you host on this computer (the former Host page is the
-  // "Create a server" / settings panel), and the public list.
-  const tab = $derived(router.route.query.get('tab') === 'browse' ? 'browse' : 'mine');
+  // Servers: the ones you can play on (My servers), the public list (Browse public), and the ones
+  // that run on this computer (Host: create, start, stop, manage, delete).
+  type TabId = 'mine' | 'browse' | 'host';
+  const tab = $derived<TabId>(
+    ((t) => (t === 'browse' || t === 'host' ? t : 'mine'))(router.route.query.get('tab')),
+  );
+
+  // --- the servers hosted on this computer ----------------------------------------------------
+  let hosts = $state<HostStatus[]>([]);
+  let hostsLoaded = $state(false);
+  let hostTask = $state<Record<string, '' | 'start' | 'stop'>>({});
+  const canHost = $derived(!app.official);
+  const manageId = $derived(router.route.query.get('manage'));
+  const managed = $derived(hosts.find((h) => h.id === manageId) ?? null);
+  /** Profile id -> its hosted server. */
+  const hostedBy = $derived(new Map(hosts.filter((h) => h.settings.profile_id).map((h) => [h.settings.profile_id!, h])));
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let unlisten: (() => void) | undefined;
+
   const tabs = $derived([
     { id: 'mine', label: 'My servers', icon: 'servers' as const, badge: String(app.profiles.length) },
     { id: 'browse', label: 'Browse public', icon: 'compass' as const },
+    ...(canHost ? [{ id: 'host', label: 'Host', icon: 'host' as const, badge: String(hosts.length) }] : []),
   ]);
 
-  // --- your hosted server -------------------------------------------------------------------
-  let host = $state<HostStatus | null>(null);
-  let hostTask = $state<'' | 'start' | 'stop'>('');
-  const hostOpen = $derived(router.route.segments[0] === 'host' || router.route.query.get('host') === '1');
-  const canHost = $derived(host !== null && /^(linux|windows)$/.test(host.platform));
-  const hosted = $derived(host?.settings.configured ? host : null);
-  const hostProfile = $derived(hosted ? app.profiles.find((p) => p.id === hosted.settings.profile_id) : undefined);
-  const hostUp = $derived(hosted ? isUp(hosted.run) : false);
-  const others = $derived(app.profiles.filter((p) => p.id !== hostProfile?.id));
-  let hostTimer: ReturnType<typeof setInterval> | undefined;
-
-  async function refreshHost() {
+  async function refreshHosts() {
     if (app.official) return;
     try {
-      host = await ipc.hostStatus();
+      hosts = await ipc.hostList();
+      app.hostIds = hosts.map((h) => h.id);
     } catch {
-      /* hosting is optional: no row */
+      /* hosting is optional */
+    }
+    hostsLoaded = true;
+  }
+
+  function goTab(id: string) {
+    router.go('servers', { tab: id === 'mine' ? undefined : id });
+  }
+  function openManage(id: string) {
+    router.go('servers', { tab: 'host', manage: id });
+  }
+  function closeManage() {
+    router.go('servers', { tab: 'host' });
+    void refreshHosts();
+  }
+
+  async function hostStart(id: string) {
+    hostTask = { ...hostTask, [id]: 'start' };
+    await run(() => ipc.hostStart(id));
+    hostTask = { ...hostTask, [id]: '' };
+    await refreshHosts();
+  }
+  async function hostStop(id: string) {
+    hostTask = { ...hostTask, [id]: 'stop' };
+    await run(() => ipc.hostStop(id));
+    hostTask = { ...hostTask, [id]: '' };
+    await refreshHosts();
+  }
+
+  /** Deletes a hosted server for good, after the user typed its name. */
+  async function hostDelete(h: HostStatus) {
+    const name = h.settings.server_name;
+    const ok = await ask({
+      title: `Delete "${name}"?`,
+      message: `The server is stopped and its folder is deleted: database (accounts, characters), settings, backups and log. It also leaves My servers.\n\nThis cannot be undone.`,
+      confirmLabel: 'Delete server',
+      danger: true,
+      typeToConfirm: name,
+    });
+    if (!ok) return;
+    if ((await run(() => ipc.hostDelete(h.id), `${name} deleted`)) !== undefined) {
+      if (manageId === h.id) router.go('servers', { tab: 'host' });
+      await Promise.all([refreshHosts(), app.refreshProfiles(), app.refreshSettings()]);
+      app.forgetServerUpdate(h.id);
     }
   }
 
-  function openHost() {
-    router.go('servers', { host: '1' });
-  }
-  function closeHost() {
-    router.go('servers');
-    void refreshHost();
+  // --- create ---------------------------------------------------------------------------------
+  let createDialog: HTMLDialogElement | undefined = $state();
+  let createName = $state('');
+  let creating = $state(false);
+
+  async function openCreate() {
+    createName = hosts.length === 0 ? 'My server' : `My server ${hosts.length + 1}`;
+    await tick();
+    createDialog?.showModal();
   }
 
-  async function hostStart() {
-    hostTask = 'start';
-    await run(() => ipc.hostStart());
-    hostTask = '';
-    await refreshHost();
-  }
-  async function hostStop() {
-    hostTask = 'stop';
-    await run(() => ipc.hostStop());
-    hostTask = '';
-    await refreshHost();
+  async function create(e: SubmitEvent) {
+    e.preventDefault();
+    creating = true;
+    const id = await run(() => ipc.hostCreate(createName.trim()));
+    creating = false;
+    if (id) {
+      createDialog?.close();
+      await refreshHosts();
+      openManage(id);
+    }
   }
 
-  onMount(() => {
+  onMount(async () => {
     void app.checkServers();
-    void refreshHost();
-    hostTimer = setInterval(() => void refreshHost(), 4000);
+    await refreshHosts();
+    unlisten = await listenHost(null, { onState: () => void refreshHosts() });
+    timer = setInterval(() => void refreshHosts(), 4000);
+    if (router.route.query.get('create') === '1') {
+      router.go('servers', { tab: 'host' });
+      if (canHost) void openCreate();
+    }
+    if (router.route.query.get('add') === '1') {
+      router.go('servers');
+      void openForm();
+    }
   });
-  onDestroy(() => hostTimer && clearInterval(hostTimer));
+  onDestroy(() => {
+    if (timer) clearInterval(timer);
+    unlisten?.();
+  });
 
   // --- add or edit by address ---------------------------------------------------------------
   let dialog: HTMLDialogElement | undefined = $state();
@@ -144,53 +209,66 @@
     busy = null;
   }
 
-  async function remove(id: string, label: string) {
+  async function remove(p: Profile) {
+    const h = hostedBy.get(p.id);
+    // A server hosted here is deleted, not just forgotten: no server is left behind unlisted.
+    if (h) return hostDelete(h);
     const ok = await ask({
-      title: `Remove "${label}"?`,
+      title: `Remove "${p.name}"?`,
       message: 'Its login is revoked and forgotten. The server itself is not touched.',
       confirmLabel: 'Remove server',
       danger: true,
     });
     if (!ok) return;
-    if ((await run(() => ipc.profileRemove(id), 'Server removed')) !== undefined) {
+    if ((await run(() => ipc.profileRemove(p.id), 'Server removed')) !== undefined) {
       await Promise.all([app.refreshProfiles(), app.refreshSettings()]);
     }
   }
 </script>
 
-<PageHead title="Servers" sub={`For ${versionLabel(app.version)}`}>
-  <button type="button" class="btn" onclick={() => openForm()}><Icon name="plus" size={14} /> Add by address</button>
-  {#if canHost && !hosted}
-    <button type="button" class="btn primary" onclick={openHost}><Icon name="host" size={14} /> Create a server</button>
+<PageHead title="Servers" sub={`For ${versionLabel(app.version)}`} />
+
+<div class="tabrow">
+  <Tabs {tabs} value={tab} label="Servers" onchange={goTab} />
+  <span class="grow"></span>
+  {#if tab === 'mine' && app.profiles.length > 0}
+    <button type="button" class="btn sm" onclick={() => openForm()}><Icon name="plus" size={14} /> Add by address</button>
+  {:else if tab === 'host' && hosts.length > 0}
+    <button type="button" class="btn sm primary" onclick={openCreate}><Icon name="plus" size={14} /> Create a server</button>
   {/if}
-</PageHead>
+</div>
 
-<Tabs {tabs} value={tab} label="Servers" onchange={(id) => router.go('servers', { tab: id === 'browse' ? 'browse' : undefined })} />
-
-{#snippet row(p: Profile, mine: boolean)}
+{#snippet row(p: Profile)}
   {@const info = app.infos[p.id]}
   {@const compat = serverCompat(typeof info === 'object' ? info.version : null, app.version, app.versions)}
   {@const selected = app.selected?.id === p.id}
-  <div class="srv" class:selected class:mine>
+  {@const hosted = hostedBy.get(p.id)}
+  <div class="srv" class:selected>
     <div class="srv-top">
-      <span class="dot-state" class:on={typeof info === 'object'} class:bad={typeof info === 'string'}></span>
+      <span class="dot-state" class:on={typeof info === 'object'} class:bad={typeof info === 'string' && !hosted}></span>
       <div class="srv-name">
         <b>{p.name}</b>
         <small>
           <code>{p.url}</code>
           {#if typeof info === 'object'} · {info.online} online{app.pings[p.id] !== undefined ? ` · ${app.pings[p.id]} ms` : ''}
+          {:else if hosted && !isUp(hosted.run)} · stopped
           {:else if typeof info === 'string'} · unreachable{/if}
         </small>
       </div>
       <div class="srv-chips">
+        {#if hosted}<Chip tone="accent" icon="host">hosted</Chip>{/if}
         {#if !p.logged_in}<Chip tone="warn">not logged in</Chip>{/if}
         {#if p.role === 'admin'}<Chip tone="info" icon="shield">admin</Chip>{/if}
         {#if p.plain_http === 'private' || p.plain_http === 'public'}<Chip tone="warn" icon="alert">plain http</Chip>{/if}
-        {#if compat.kind === 'ok'}<Chip tone="ok">compatible</Chip>
-        {:else if compat.kind === 'other'}<Chip tone="bad" icon="alert">needs {compat.version}</Chip>
+        {#if compat.kind === 'other'}<Chip tone="bad" icon="alert">needs {compat.version}</Chip>
         {:else if compat.kind === 'unsupported'}<Chip tone="bad" icon="alert">incompatible</Chip>{/if}
       </div>
       <div class="srv-actions">
+        {#if hosted && !isUp(hosted.run)}
+          <button type="button" class="btn sm primary" disabled={!!hostTask[hosted.id] || !hosted.settings.configured} onclick={() => hostStart(hosted.id)}>
+            {#if hostTask[hosted.id] === 'start'}<Spinner size={12} />{/if} Start
+          </button>
+        {/if}
         {#if selected}<Chip tone="accent" icon="check">selected</Chip>
         {:else}<button type="button" class="btn sm" onclick={() => app.select(p.id)}>Select</button>{/if}
         {#if p.role === 'admin'}
@@ -198,7 +276,7 @@
             Web admin <Icon name="external" size={12} />
           </button>
         {/if}
-        <button type="button" class="btn sm icon ghost" aria-expanded={isOpen(p)} aria-label="Details of {p.name}" title="Details, login, edit" onclick={() => (open[p.id] = !isOpen(p))}>
+        <button type="button" class="btn sm icon ghost" aria-expanded={isOpen(p)} aria-label="Details of {p.name}" title="Login, details, edit" onclick={() => (open[p.id] = !isOpen(p))}>
           <Icon name="chevron" size={15} class={isOpen(p) ? 'flip' : ''} />
         </button>
       </div>
@@ -215,7 +293,7 @@
         <PlainHttpNotice profile={p} onchange={() => app.refreshProfiles()} />
         <AccountPanel profile={p} />
         {#if typeof info === 'string'}
-          <p class="err">{info}</p>
+          {#if !hosted}<p class="err">{info}</p>{/if}
         {:else if info}
           <dl class="kv">
             <dt>Realm</dt><dd>{info.name}</dd>
@@ -229,9 +307,15 @@
           <button type="button" class="btn sm" onclick={() => check(p.id)} disabled={busy === p.id}>
             {#if busy === p.id}<Spinner size={12} />{:else}<Icon name="refresh" size={13} />{/if} Check
           </button>
-          <button type="button" class="btn sm" onclick={() => openForm(p)}><Icon name="edit" size={13} /> Edit</button>
+          {#if hosted}
+            <button type="button" class="btn sm" onclick={() => openManage(hosted.id)}><Icon name="settings" size={13} /> Manage</button>
+          {:else}
+            <button type="button" class="btn sm" onclick={() => openForm(p)}><Icon name="edit" size={13} /> Edit</button>
+          {/if}
           <span class="grow"></span>
-          <button type="button" class="btn sm danger" onclick={() => remove(p.id, p.name)}><Icon name="trash" size={13} /> Remove</button>
+          <button type="button" class="btn sm danger" onclick={() => remove(p)}>
+            <Icon name="trash" size={13} /> {hosted ? 'Delete server' : 'Remove'}
+          </button>
         </div>
       </div>
     {/if}
@@ -240,54 +324,66 @@
 
 {#if tab === 'browse'}
   <ServerBrowser />
-{:else}
-  {#if hosted}
-    <h3 class="group">Hosted on this computer</h3>
-    <div class="host-row">
-      <div class="host-state">
-        <Chip tone={hosted.info ? 'ok' : hostUp ? 'warn' : hosted.run.state === 'exited' && hosted.run.code !== 0 && hosted.run.code !== null ? 'bad' : 'neutral'} dot>
-          {runLabel(hosted.run, hosted.info != null)}
-        </Chip>
-        {#if hosted.info}<span class="muted">{hosted.info.online} online · up {formatUptime(hosted.info.uptime_secs)}</span>{/if}
-        {#if hosted.package}<span class="faint">server {hosted.package.server_version}</span>{/if}
-        <span class="grow"></span>
-        {#if hostUp}
-          <button type="button" class="btn sm" disabled={hostTask !== '' || hosted.run.state === 'stopping'} onclick={hostStop}>
-            {#if hostTask === 'stop'}<Spinner size={12} />{/if} Stop
-          </button>
-        {:else}
-          <button type="button" class="btn sm primary" disabled={hostTask !== '' || !hosted.game_installed} onclick={hostStart}>
-            {#if hostTask === 'start'}<Spinner size={12} />{/if} Start
-          </button>
-        {/if}
-        <button type="button" class="btn sm" onclick={openHost} title="Program, settings, log and backups of your server"><Icon name="settings" size={13} /> Manage</button>
-      </div>
-      {#if hostProfile}
-        {@render row(hostProfile, true)}
-      {:else}
-        <p class="hint" style="margin: 0">{hosted.settings.server_name} is not in your server list yet. Open Manage and apply its settings to add it.</p>
-      {/if}
-    </div>
-    <h3 class="group">Saved</h3>
-  {/if}
-
-  {#if app.profiles.length === 0}
-    <Empty icon="servers" title="No servers yet">
-      Add a friend's server by its address, find one under <a href="#/servers?tab=browse">Browse public</a>{#if canHost}, or create your own on this computer{/if}.
+{:else if tab === 'host'}
+  {#if !hostsLoaded}
+    <div class="loading"><Spinner size={18} /> Loading...</div>
+  {:else if hosts.length === 0}
+    <Empty icon="host" title="No server on this computer yet">
+      Run a private PoE2 server here and let friends join it. You can run several, each on its own ports.
       {#snippet action()}
-        <div class="row" style="justify-content: center">
-          <button type="button" class="btn" onclick={() => openForm()}><Icon name="plus" size={14} /> Add by address</button>
-          {#if canHost}<button type="button" class="btn primary" onclick={openHost}><Icon name="host" size={14} /> Create a server</button>{/if}
-        </div>
+        <button type="button" class="btn primary" onclick={openCreate}><Icon name="plus" size={14} /> Create a server</button>
       {/snippet}
     </Empty>
-  {:else if others.length === 0 && hosted}
-    <p class="muted">No other servers. Add one by address or browse the public list.</p>
   {:else}
     <div class="srv-list">
-      {#each others as p (p.id)}{@render row(p, false)}{/each}
+      {#each hosts as h (h.id)}
+        {@const up = isUp(h.run)}
+        {@const ready = h.info != null}
+        <div class="srv host">
+          <div class="srv-top">
+            <span class="dot-state" class:on={ready} class:warm={up && !ready}></span>
+            <div class="srv-name">
+              <b>{h.settings.server_name}</b>
+              <small>login {h.settings.login_port} · game {h.settings.instance_port} · web {h.settings.web_port}{h.package ? ` · server ${h.package.server_version}` : ''}</small>
+            </div>
+            <div class="srv-chips">
+              <Chip tone={ready ? 'ok' : up ? 'warn' : h.run.state === 'exited' && h.run.code !== 0 && h.run.code !== null ? 'bad' : 'neutral'} dot>
+                {runLabel(h.run, ready).replace(/ \(pid \d+\)/, '')}
+              </Chip>
+              {#if h.info}<span class="muted small">{h.info.online} online · up {formatUptime(h.info.uptime_secs)}</span>{/if}
+              {#if !h.settings.configured}<Chip tone="warn">not set up</Chip>{/if}
+              {#if app.serverUpdates[h.id]?.update_available}<Chip tone="accent" icon="download">update</Chip>{/if}
+            </div>
+            <div class="srv-actions">
+              {#if up}
+                <button type="button" class="btn sm" disabled={!!hostTask[h.id] || h.run.state === 'stopping'} onclick={() => hostStop(h.id)}>
+                  {#if hostTask[h.id] === 'stop'}<Spinner size={12} />{/if} Stop
+                </button>
+              {:else}
+                <button type="button" class="btn sm primary" disabled={!!hostTask[h.id] || !h.settings.configured || !h.game_installed} onclick={() => hostStart(h.id)}
+                  title={!h.settings.configured ? 'Apply its settings first (Manage)' : !h.game_installed ? 'Install the game first (Library)' : ''}>
+                  {#if hostTask[h.id] === 'start'}<Spinner size={12} />{/if} Start
+                </button>
+              {/if}
+              <button type="button" class="btn sm" onclick={() => openManage(h.id)}><Icon name="settings" size={13} /> Manage</button>
+            </div>
+          </div>
+        </div>
+      {/each}
     </div>
+    <p class="hint host-hint">Servers run while the launcher is open. Each one has its own folder: database, settings, backups and log. Downloaded server programs are shared.</p>
   {/if}
+{:else if app.profiles.length === 0}
+  <Empty icon="servers" title="No servers yet">
+    Add a friend's server by its address, find one under <a href="#/servers?tab=browse">Browse public</a>{#if canHost}, or host your own under <a href="#/servers?tab=host">Host</a>{/if}.
+    {#snippet action()}
+      <button type="button" class="btn primary" onclick={() => openForm()}><Icon name="plus" size={14} /> Add by address</button>
+    {/snippet}
+  </Empty>
+{:else}
+  <div class="srv-list">
+    {#each app.profiles as p (p.id)}{@render row(p)}{/each}
+  </div>
 {/if}
 
 <dialog bind:this={dialog} class="modal" aria-labelledby="srv-form-title" onclose={() => (editing = null)}>
@@ -315,23 +411,39 @@
   </form>
 </dialog>
 
-{#if hostOpen && !app.official}
-  <Drawer title={hosted ? (hostProfile?.name ?? hosted.settings.server_name) : 'Create a server'} onclose={closeHost}>
-    <HostPanel />
+<dialog bind:this={createDialog} class="modal" aria-labelledby="create-title">
+  <form class="dialog-body" onsubmit={create}>
+    <div class="dialog-head"><h2 id="create-title">Create a server</h2></div>
+    <p class="muted">A new server on this computer. It gets free ports by itself; you can change them in its settings.</p>
+    <label class="field"><span>Server name (shown to players)</span><input bind:value={createName} maxlength="64" /></label>
+    <div class="actions">
+      <button type="button" class="btn" onclick={() => createDialog?.close()}>Cancel</button>
+      <button class="btn primary" type="submit" disabled={creating || !createName.trim()}>{#if creating}<Spinner size={14} />{/if} Create</button>
+    </div>
+  </form>
+</dialog>
+
+{#if manageId && managed && !app.official}
+  <Drawer title={managed.settings.server_name} onclose={closeManage}>
+    {#key manageId}
+      <HostPanel id={manageId} ondelete={() => hostDelete(managed)} onchange={refreshHosts} />
+    {/key}
   </Drawer>
 {/if}
 
 <style>
-  .group { font: 500 10.5px/1 var(--font); letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: var(--sp-4) 0 var(--sp-2); }
+  .tabrow { display: flex; align-items: flex-end; gap: var(--sp-3); margin-bottom: var(--sp-5); border-bottom: 1px solid var(--line); }
+  .tabrow :global(.tabs) { border-bottom: 0; margin: 0; }
+  .tabrow > .btn { margin-bottom: var(--sp-2); }
   .srv-list { display: flex; flex-direction: column; }
-  .srv { border: 1px solid var(--line); background: var(--surface); padding: 10px 14px; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
+  .srv { border: 1px solid var(--line); background: var(--surface); padding: 14px 18px; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
   .srv-list .srv + .srv { border-top: 0; }
-  .srv-list .srv:first-child { border-radius: var(--radius) var(--radius) 0 0; }
-  .srv-list .srv:last-child { border-radius: 0 0 var(--radius) var(--radius); }
-  .srv-list .srv:only-child { border-radius: var(--radius); }
+  .srv-list .srv:first-child { border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+  .srv-list .srv:last-child { border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+  .srv-list .srv:only-child { border-radius: var(--radius-lg); }
   .srv.selected { box-shadow: inset 2px 0 0 var(--gold); }
   .srv-top { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
-  .srv-name { display: flex; flex-direction: column; min-width: 0; flex: 1 1 200px; }
+  .srv-name { display: flex; flex-direction: column; min-width: 0; flex: 1 1 200px; gap: 2px; }
   .srv-name b { font-weight: 600; font-size: var(--fs-md); }
   .srv-name small { color: var(--muted); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .srv-name code { background: none; padding: 0; font-size: inherit; }
@@ -339,13 +451,13 @@
   .srv-actions :global(.flip) { transform: rotate(180deg); }
   .srv-actions :global(.icon) { transition: transform var(--dur) var(--ease); }
   .srv-warn { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; font-size: var(--fs-sm); color: var(--danger); }
-  .srv-more { margin-top: var(--sp-1); }
+  .srv-more { margin-top: var(--sp-2); }
   .srv-more .kv { margin-top: var(--sp-3); font-size: var(--fs-sm); }
   .srv-tools { margin-top: var(--sp-3); }
   .dot-state { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
   .dot-state.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot-state.warm { background: var(--warn); }
   .dot-state.bad { background: var(--danger); }
-  .host-row { border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line)); border-radius: var(--radius); background: linear-gradient(90deg, color-mix(in srgb, var(--crimson) 20%, var(--surface)), var(--surface)); padding: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-3); }
-  .host-row .srv { border-radius: var(--radius); }
-  .host-state { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; font-size: var(--fs-sm); }
+  .small { font-size: var(--fs-xs); }
+  .host-hint { margin-top: var(--sp-4); }
 </style>

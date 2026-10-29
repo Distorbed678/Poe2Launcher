@@ -8,6 +8,8 @@ export interface ConfirmRequest {
   danger?: boolean;
   /** A checkbox that must be ticked before the confirm button works (a warning to accept). */
   acknowledge?: string;
+  /** Text the user must type exactly (e.g. a server's name) before the confirm button works. */
+  typeToConfirm?: string;
 }
 
 interface Pending extends ConfirmRequest {

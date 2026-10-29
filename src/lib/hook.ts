@@ -65,7 +65,7 @@ export function setupSteps(i: SetupInputs): SetupStep[] {
   return [
     { id: 'game', title: 'Install the game', done: i.gameInstalled, detail: 'Download Path of Exile 2 from Steam into the launcher\'s own folder.' },
     { id: 'hook', title: 'Get the client hook', done: i.hookReady, detail: 'The DLL that lets the game talk to a private server.' },
-    { id: 'server', title: 'Host a server or join one', done: i.profiles > 0, detail: 'Host your own from the launcher, or add a friend\'s server.' },
+    { id: 'server', title: 'Pick a server', done: i.profiles > 0, detail: 'Host your own on this computer, or join a friend\'s or a public one.' },
   ];
 }
 

@@ -1,7 +1,11 @@
-//! The "Host a server" operations of [`Core`]: get a server package (GitHub release or a local
-//! file or folder), write its config from the wizard's answers, make the admin account, start
-//! and stop it, report its state. The pure parts are in [`crate::host`], the process in
-//! [`crate::host_run`].
+//! The "Host a server" operations of [`Core`]: create and delete hosted servers (several per
+//! computer, each with an id, its own folder and ports, see [`HostDirs`]), get a server package
+//! (GitHub release or a local file or folder, shared by the servers), write a server's config
+//! from its settings, start and stop it, report its state and usage. The pure parts are in
+//! [`crate::host`], the process in [`crate::host_run`].
+//!
+//! The launcher never handles an account password here: a new server's first admin is created
+//! in its web admin (`/setup`, only from this computer), which "Open web admin" leads to.
 
 use std::{
     path::{Path, PathBuf},
@@ -16,8 +20,8 @@ use serde_json::json;
 use crate::{
     api::{ApiClient, ServerInfo},
     core::{Core, ProfileView},
-    host::{self, HostDirs, HostSettings, PackageInfo, ServerRelease, config_path, local_web_url},
-    host_run::{RunState, StartSpec, run_oneshot_stdin},
+    host::{self, HostDirs, HostSettings, PackageInfo, ServerRelease, local_web_url},
+    host_run::{HostRuntime, RunState, StartSpec},
     paths::{reject_steam_paths, write_atomic},
     verify,
 };
@@ -31,7 +35,8 @@ impl Drop for BusyGuard<'_> {
     }
 }
 
-/// The config files of the package that is being replaced.
+/// The config files of the package that is being replaced: its example and the server's
+/// config written from it (the user may have changed it in the web admin).
 #[derive(Debug, Clone)]
 pub struct PreviousConfig {
     pub example: String,
@@ -39,56 +44,43 @@ pub struct PreviousConfig {
 }
 
 impl PreviousConfig {
-    /// `None` when the old package has no readable `server.toml` / `server.example.toml`.
-    pub fn read(dir: &Path) -> Option<Self> {
-        let cfg = dir.join("config");
+    /// `None` when the old package has no readable `server.example.toml` or the server no config.
+    pub fn read(package: &Path, config: &Path) -> Option<Self> {
         Some(Self {
-            example: std::fs::read_to_string(cfg.join("server.example.toml")).ok()?,
-            config: std::fs::read_to_string(cfg.join("server.toml")).ok()?,
+            example: std::fs::read_to_string(package.join("config").join("server.example.toml"))
+                .ok()?,
+            config: std::fs::read_to_string(config).ok()?,
         })
     }
 }
 
-/// The wizard's answers. The admin password is typed in the UI, handed once to
-/// `poe-server account create --password-stdin` and wiped; it is never stored, logged, or put
-/// on a command line.
-#[derive(Clone, Deserialize)]
+/// The settings to apply to a server.
+#[derive(Debug, Clone, Deserialize)]
 pub struct SetupRequest {
     pub settings: HostSettings,
-    /// Empty = keep the existing accounts (re-applying changed settings).
-    #[serde(default)]
-    pub admin_password: String,
-}
-
-impl std::fmt::Debug for SetupRequest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SetupRequest")
-            .field("settings", &self.settings)
-            .field("admin_password", &"<redacted>")
-            .finish()
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SetupResult {
     pub profile: ProfileView,
-    /// The admin name was taken already: it was promoted, its password is unchanged.
-    pub admin_existed: bool,
     pub config_file: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct InstallOutcome {
     pub package: PackageInfo,
-    /// The archive's SHA-256 (absent when a folder was used).
+    /// The archive's SHA-256 (absent when a folder or an installed package was used).
     pub sha256: Option<String>,
     /// The SHA-256 matched the `.sha256` file that belongs to the archive.
     pub checksum_verified: bool,
+    /// `download`, `file`, `folder`, `current` (already installed for this server) or
+    /// `shared` (the same release was installed for another server).
     pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct HostStatus {
+    pub id: String,
     pub settings: HostSettings,
     pub package: Option<PackageInfo>,
     /// Why the stored package cannot be used (missing, wrong game version, ...).
@@ -103,21 +95,103 @@ pub struct HostStatus {
     pub web_url: String,
     pub lan_ip: Option<String>,
     pub log_file: PathBuf,
+    pub folder: PathBuf,
     pub busy: bool,
     pub hosting_guide_url: &'static str,
 }
 
+/// What Manage > Overview shows under "Usage".
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct HostMetrics {
+    /// CPU of the server process in percent of one core (the launcher's own reading on Linux,
+    /// else the server's); absent when unknown.
+    pub cpu_pct: Option<f32>,
+    /// Resident memory of the server process in bytes.
+    pub rss_bytes: Option<u64>,
+    /// The last readings, oldest first, for the small charts.
+    pub cpu_history: Vec<f32>,
+    pub rss_history: Vec<u64>,
+    /// Simulation frame time of the last sample (mean and longest), milliseconds.
+    pub tick_avg_ms: Option<f32>,
+    pub tick_max_ms: Option<f32>,
+    /// Network traffic of the game connections, bytes per second.
+    pub net_in_bps: Option<u64>,
+    pub net_out_bps: Option<u64>,
+    pub players: Option<u32>,
+    pub uptime_secs: Option<u64>,
+    /// The server reports no metrics (`[metrics] enabled = false`, or an older server).
+    pub server_metrics: bool,
+}
+
+/// The newest sample of `GET /local/metrics`.
+#[derive(Debug, Clone, Deserialize)]
+struct LocalMetrics {
+    #[serde(default)]
+    uptime_secs: u64,
+    latest: Option<LocalPoint>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LocalPoint {
+    players: u32,
+    tick_avg_us: u32,
+    tick_max_us: u32,
+    #[serde(default)]
+    rss_bytes: u64,
+    cpu_pct: Option<f32>,
+    #[serde(default)]
+    net_in_bps: u64,
+    #[serde(default)]
+    net_out_bps: u64,
+}
+
 impl Core {
-    pub(crate) fn host_dirs(&self) -> HostDirs {
-        HostDirs::new(&self.dirs)
+    // --- the servers -------------------------------------------------------------------------
+
+    pub(crate) fn host_dirs(&self, id: &str) -> HostDirs {
+        HostDirs::new(&self.dirs, id)
     }
 
-    pub fn host_settings(&self) -> Result<HostSettings> {
-        HostSettings::load(self.host_dirs().settings_file())
+    /// The ids of the hosted servers.
+    pub fn host_ids(&self) -> Vec<String> {
+        host::server_ids(&self.dirs)
     }
 
-    pub(crate) fn host_save(&self, s: &HostSettings) -> Result<()> {
-        s.save(self.host_dirs().settings_file())
+    /// Fails for an id that is not a hosted server.
+    fn host_known(&self, id: &str) -> Result<HostDirs> {
+        if !host::valid_server_id(id) || !self.host_ids().iter().any(|i| i == id) {
+            bail!("there is no hosted server {id}");
+        }
+        Ok(self.host_dirs(id))
+    }
+
+    /// The process of server `id` (made on first use).
+    pub fn runtime(&self, id: &str) -> HostRuntime {
+        self.hosts
+            .lock()
+            .unwrap()
+            .entry(id.to_owned())
+            .or_insert_with(|| HostRuntime::for_server(id))
+            .clone()
+    }
+
+    /// Every hosted server process that runs (or is stopping).
+    pub fn running_hosts(&self) -> Vec<String> {
+        self.hosts
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, r)| r.is_running())
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    pub fn host_settings(&self, id: &str) -> Result<HostSettings> {
+        HostSettings::load(self.host_known(id)?.settings_file())
+    }
+
+    pub(crate) fn host_save(&self, id: &str, s: &HostSettings) -> Result<()> {
+        s.save(self.host_dirs(id).settings_file())
     }
 
     /// Hosting is for the private game versions; "Official (read-only)" has no server.
@@ -138,9 +212,9 @@ impl Core {
         Ok(BusyGuard(&self.host_busy))
     }
 
-    pub(crate) fn host_step(&self, step: &str) {
-        self.emit("host:setup", json!({"step": step}));
-        self.host.note(self.events.as_ref(), step);
+    pub(crate) fn host_step(&self, id: &str, step: &str) {
+        self.emit("host:setup", json!({"id": id, "step": step}));
+        self.runtime(id).note(self.events.as_ref(), step);
     }
 
     pub(crate) fn host_os(&self) -> &'static str {
@@ -156,8 +230,95 @@ impl Core {
         host::inspect_package(dir, &self.version().version, self.host_os())
     }
 
-    pub async fn host_status(&self) -> Result<HostStatus> {
-        let settings = self.host_settings()?;
+    /// The settings of every hosted server but `except`.
+    fn host_others(&self, except: &str) -> Vec<HostSettings> {
+        self.host_ids()
+            .into_iter()
+            .filter(|i| i != except)
+            .filter_map(|i| HostSettings::load(self.host_dirs(&i).settings_file()).ok())
+            .collect()
+    }
+
+    /// The package folders some hosted server uses (they are never pruned or replaced).
+    pub(crate) fn host_packages_in_use(&self) -> Vec<PathBuf> {
+        self.host_ids()
+            .into_iter()
+            .filter_map(|i| HostSettings::load(self.host_dirs(&i).settings_file()).ok())
+            .filter_map(|s| s.package_dir)
+            .collect()
+    }
+
+    pub(crate) fn host_prune_packages(&self, id: &str) {
+        host::prune_packages(&self.host_dirs(id).packages(), &self.host_packages_in_use());
+    }
+
+    /// Creates a hosted server: an id, the next free ports, the name, and the newest installed
+    /// package when there is one (else the Program tab gets one). Not set up or started.
+    /// Returns the new server's id.
+    pub fn host_create(&self, name: &str) -> Result<String> {
+        self.host_private_only()?;
+        let ids = self.host_ids();
+        let id = host::new_server_id(&ids);
+        let others = self.host_others(&id);
+        let (login, instance, web) =
+            host::next_free_ports(&others, &|s| !host::busy_ports(s).is_empty())?;
+        let mut s = HostSettings {
+            server_name: if name.trim().is_empty() {
+                format!("Server {}", &id[1..])
+            } else {
+                name.trim().to_owned()
+            },
+            login_port: login,
+            instance_port: instance,
+            web_port: web,
+            public_host: host::detect_lan_ip().map_or_else(|| "127.0.0.1".into(), |ip| ip.to_string()),
+            ..HostSettings::default()
+        };
+        s.validate()?;
+        // A release another server runs is used again (no download).
+        s.package_dir = others
+            .iter()
+            .filter_map(|o| o.package_dir.clone())
+            .filter(|d| host::inspect_package(d, &self.version().version, self.host_os()).is_ok())
+            .max();
+        std::fs::create_dir_all(host::servers_config_dir(&self.dirs))?;
+        std::fs::create_dir_all(self.host_dirs(&id).root())?;
+        self.host_save(&id, &s)?;
+        Ok(id)
+    }
+
+    /// Deletes a hosted server: stops it, removes it from Servers (its login is revoked), and
+    /// deletes its folder (database, config, backups, log) and settings. Packages no other
+    /// server uses go too.
+    pub async fn host_delete(&self, id: &str) -> Result<()> {
+        let dirs = self.host_known(id)?;
+        let s = HostSettings::load(dirs.settings_file())?;
+        let rt = self.runtime(id);
+        if rt.is_running() {
+            rt.stop(crate::host_run::STOP_GRACE + Duration::from_secs(10))
+                .await
+                .context("the server did not stop, so nothing was deleted")?;
+        }
+        if let Some(p) = &s.profile_id
+            && self.profiles()?.iter().any(|v| &v.id == p)
+        {
+            self.remove_profile(p).await?;
+        }
+        reject_steam_paths(dirs.root(), "server folder")?;
+        if dirs.root().exists() {
+            std::fs::remove_dir_all(dirs.root())
+                .with_context(|| format!("deleting {}", dirs.root().display()))?;
+        }
+        std::fs::remove_file(dirs.settings_file())?;
+        let _ = std::fs::remove_file(dirs.backup_settings_file());
+        self.hosts.lock().unwrap().remove(id);
+        self.host_prune_packages(id);
+        Ok(())
+    }
+
+    pub async fn host_status(&self, id: &str) -> Result<HostStatus> {
+        let settings = self.host_settings(id)?;
+        let dirs = self.host_dirs(id);
         let (package, package_problem) = match &settings.package_dir {
             None => (None, None),
             Some(_) => match self.host_package(&settings) {
@@ -166,7 +327,7 @@ impl Core {
             },
         };
         let install_dir = self.install_dir()?;
-        let run = self.host.state();
+        let run = self.runtime(id).state();
         let web_url = local_web_url(&settings);
         let info = if matches!(run, RunState::Running { .. }) {
             tokio::time::timeout(
@@ -180,6 +341,7 @@ impl Core {
             None
         };
         Ok(HostStatus {
+            id: id.to_owned(),
             package,
             package_problem,
             platform: self.host_os().to_owned(),
@@ -190,15 +352,68 @@ impl Core {
             info,
             web_url,
             lan_ip: host::detect_lan_ip().map(|ip| ip.to_string()),
-            log_file: self.host_dirs().log_file(),
+            log_file: dirs.log_file(),
+            folder: dirs.root().to_path_buf(),
             busy: *self.host_busy.lock().unwrap(),
             hosting_guide_url: host::HOSTING_GUIDE_URL,
             settings,
         })
     }
 
-    pub fn host_log_tail(&self, n: usize) -> Vec<String> {
-        self.host.tail(n.min(crate::host_run::LOG_LINES))
+    /// Every hosted server's status (the Host tab).
+    pub async fn host_list(&self) -> Result<Vec<HostStatus>> {
+        let ids = self.host_ids();
+        let all = futures_util::future::join_all(ids.iter().map(|id| self.host_status(id))).await;
+        all.into_iter().collect()
+    }
+
+    /// CPU, memory, frame time, network and players of a running server.
+    pub async fn host_metrics(&self, id: &str) -> Result<HostMetrics> {
+        let s = self.host_settings(id)?;
+        let rt = self.runtime(id);
+        let mut m = HostMetrics::default();
+        let Some(pid) = rt.pid() else {
+            return Ok(m);
+        };
+        if let Some((cpu, rss)) = rt.probe_usage(pid) {
+            m.cpu_pct = cpu;
+            m.rss_bytes = Some(rss);
+        }
+        let api = ApiClient::with_timeouts(
+            &local_web_url(&s),
+            Duration::from_millis(500),
+            Duration::from_millis(1200),
+        );
+        if let Ok(Ok(local)) = tokio::time::timeout(
+            Duration::from_millis(1500),
+            api.get_json::<LocalMetrics>("/local/metrics"),
+        )
+        .await
+        {
+            m.uptime_secs = Some(local.uptime_secs);
+            if let Some(p) = local.latest {
+                m.server_metrics = true;
+                m.players = Some(p.players);
+                m.tick_avg_ms = Some(p.tick_avg_us as f32 / 1000.0);
+                m.tick_max_ms = Some(p.tick_max_us as f32 / 1000.0);
+                m.net_in_bps = Some(p.net_in_bps);
+                m.net_out_bps = Some(p.net_out_bps);
+                // Where the launcher cannot read the process (Windows), the server's own reading.
+                if m.rss_bytes.is_none() && p.rss_bytes > 0 {
+                    m.rss_bytes = Some(p.rss_bytes);
+                }
+                if m.cpu_pct.is_none() {
+                    m.cpu_pct = p.cpu_pct;
+                }
+            }
+        }
+        rt.record_usage(m.cpu_pct, m.rss_bytes);
+        (m.cpu_history, m.rss_history) = rt.usage_history();
+        Ok(m)
+    }
+
+    pub fn host_log_tail(&self, id: &str, n: usize) -> Vec<String> {
+        self.runtime(id).tail(n.min(crate::host_run::LOG_LINES))
     }
 
     pub fn host_lan_ip(&self) -> Option<String> {
@@ -225,16 +440,22 @@ impl Core {
     }
 
     /// Finds, downloads, verifies (SHA-256 against the release's `.sha256`) and installs the
-    /// newest matching server package.
-    pub async fn host_install_latest(&self) -> Result<InstallOutcome> {
-        self.host_install_latest_from(host::API_BASE).await
+    /// newest matching server package for server `id`. A release another server already has is
+    /// used without a download.
+    pub async fn host_install_latest(&self, id: &str) -> Result<InstallOutcome> {
+        self.host_install_latest_from(id, host::API_BASE).await
     }
 
-    pub async fn host_install_latest_from(&self, api_base: &str) -> Result<InstallOutcome> {
+    pub async fn host_install_latest_from(
+        &self,
+        id: &str,
+        api_base: &str,
+    ) -> Result<InstallOutcome> {
+        self.host_known(id)?;
         let release = self.host_find_release_at(api_base).await?;
         let _busy = self.host_begin()?;
-        self.ensure_host_stopped()?;
-        if let Ok(current) = self.host_package(&self.host_settings()?)
+        self.ensure_host_stopped(id)?;
+        if let Ok(current) = self.host_package(&self.host_settings(id)?)
             && current.server_version == release.version
             && current.game_version == release.game_version
         {
@@ -245,8 +466,16 @@ impl Core {
                 source: "current".into(),
             });
         }
-        let (named, got) = self.host_download_verified(&release).await?;
-        let out = self.host_adopt(&named, Some(got), true, "download").await;
+        let dirs = self.host_dirs(id);
+        if let Some(name) = host::package_name_of_asset(&release.asset_name) {
+            let dir = dirs.packages().join(name);
+            if let Ok(pkg) = host::inspect_package(&dir, &self.version().version, self.host_os()) {
+                self.host_step(id, &format!("{} is installed already (another server uses it)", pkg.name));
+                return self.host_use_package(id, pkg, None, false, "shared");
+            }
+        }
+        let (named, got) = self.host_download_verified(id, &release).await?;
+        let out = self.host_adopt(id, &named, Some(got), true, "download").await;
         let _ = tokio::fs::remove_file(&named).await;
         out
     }
@@ -256,14 +485,12 @@ impl Core {
     /// hash; on a mismatch the download is deleted. The caller holds the busy flag.
     pub(crate) async fn host_download_verified(
         &self,
+        id: &str,
         release: &ServerRelease,
     ) -> Result<(PathBuf, String)> {
-        let dirs = self.host_dirs();
+        let dirs = self.host_dirs(id);
         reject_steam_paths(&dirs.packages(), "server folder")?;
-        self.host_step(&format!(
-            "looking at the checksum of {}",
-            release.asset_name
-        ));
+        self.host_step(id, &format!("looking at the checksum of {}", release.asset_name));
         let expected = host::parse_sha256_file(
             &host::download_text(&release.sha256_url).await?,
             &release.asset_name,
@@ -271,12 +498,13 @@ impl Core {
         let archive = dirs
             .downloads()
             .join(format!("{}.part", release.asset_name));
-        self.host_step(&format!("downloading {}", release.asset_name));
+        self.host_step(id, &format!("downloading {}", release.asset_name));
         let events = self.events.clone();
+        let sid = id.to_owned();
         let (got, bytes) = host::download(&release.asset_url, &archive, &move |done, total| {
             events.emit(
                 "host:progress",
-                json!({"phase": "download", "done": done, "total": total}),
+                json!({"id": sid, "phase": "download", "done": done, "total": total}),
             );
         })
         .await?;
@@ -290,20 +518,21 @@ impl Core {
         // Keep the real name for the archive so the package check reads naturally.
         let named = dirs.downloads().join(&release.asset_name);
         tokio::fs::rename(&archive, &named).await?;
-        self.host_step("checksum matches; unpacking");
+        self.host_step(id, "checksum matches; unpacking");
         Ok((named, got))
     }
 
-    /// Installs a package the user has: a `.tar.gz` / `.zip` (checked against a `.sha256` file
-    /// next to it when there is one) or an unpacked package folder.
-    pub async fn host_install_local(&self, path: &str) -> Result<InstallOutcome> {
+    /// Installs a package the user has for server `id`: a `.tar.gz` / `.zip` (checked against a
+    /// `.sha256` file next to it when there is one) or an unpacked package folder.
+    pub async fn host_install_local(&self, id: &str, path: &str) -> Result<InstallOutcome> {
+        self.host_known(id)?;
         let source = PathBuf::from(path);
         let _busy = self.host_begin()?;
-        self.ensure_host_stopped()?;
+        self.ensure_host_stopped(id)?;
         reject_steam_paths(&source, "package")?;
         if source.is_dir() {
-            self.host_step("copying the package folder");
-            return self.host_adopt(&source, None, false, "folder").await;
+            self.host_step(id, "copying the package folder");
+            return self.host_adopt(id, &source, None, false, "folder").await;
         }
         ensure_file(&source)?;
         let src = source.clone();
@@ -321,50 +550,69 @@ impl Core {
             }
             verified = true;
         }
-        self.host_step(if verified {
-            "checksum matches; unpacking"
-        } else {
-            "no .sha256 file next to the package: unpacking without a check"
-        });
-        self.host_adopt(&source, Some(sha), verified, "file").await
+        self.host_step(
+            id,
+            if verified {
+                "checksum matches; unpacking"
+            } else {
+                "no .sha256 file next to the package: unpacking without a check"
+            },
+        );
+        self.host_adopt(id, &source, Some(sha), verified, "file").await
     }
 
     async fn host_adopt(
         &self,
+        id: &str,
         source: &Path,
         sha256: Option<String>,
         checksum_verified: bool,
         how: &str,
     ) -> Result<InstallOutcome> {
-        let dirs = self.host_dirs();
-        // The config of the package being replaced, read before it can disappear.
-        let before = self.host_settings()?;
-        let previous = before
-            .package_dir
-            .as_deref()
-            .filter(|_| before.configured)
-            .and_then(PreviousConfig::read);
-        let (src, packages, game, os) = (
+        let dirs = self.host_dirs(id);
+        let (src, packages, game, os, in_use) = (
             source.to_path_buf(),
             dirs.packages(),
             self.version().version,
             self.host_os(),
+            self.host_packages_in_use(),
         );
-        let package =
-            tokio::task::spawn_blocking(move || host::install_package(&src, &packages, &game, os))
-                .await??;
-        let mut s = self.host_settings()?;
+        let package = tokio::task::spawn_blocking(move || {
+            host::install_package_keeping(&src, &packages, &game, os, None, &in_use)
+        })
+        .await??;
+        self.host_use_package(id, package, sha256, checksum_verified, how)
+    }
+
+    /// Points server `id` at `package`, writes its config again when it is set up (the user's
+    /// changes to the old config carried over), and prunes the packages nobody uses.
+    fn host_use_package(
+        &self,
+        id: &str,
+        package: PackageInfo,
+        sha256: Option<String>,
+        checksum_verified: bool,
+        how: &str,
+    ) -> Result<InstallOutcome> {
+        let dirs = self.host_dirs(id);
+        let mut s = self.host_settings(id)?;
+        let previous = s
+            .package_dir
+            .as_deref()
+            .filter(|_| s.configured)
+            .and_then(|d| PreviousConfig::read(d, &dirs.config()));
         s.package_dir = Some(package.dir.clone());
-        self.host_save(&s)?;
-        host::prune_packages(&dirs.packages(), &package.dir);
+        self.host_save(id, &s)?;
+        self.host_prune_packages(id);
+        // An "autostart failed" note about the old (or missing) package is not true any more.
+        self.runtime(id).forget_failed_starts();
         if s.configured {
-            // An update: the package changed, so the config in it is written again from the
-            // saved answers and what the user changed in the old one (the database lives
-            // outside the package and stays).
-            self.host_write_configs_carrying(&s, &package, previous.as_ref())
+            // The package changed, so the config is written again from the saved settings and
+            // what the user changed in the old one (the database lives outside the package).
+            self.host_write_configs_carrying(id, &s, &package, previous.as_ref())
                 .context("the new package is installed, but its config could not be written")?;
         }
-        self.emit("host:installed", json!({"package": package.name}));
+        self.emit("host:installed", json!({"id": id, "package": package.name}));
         Ok(InstallOutcome {
             package,
             sha256,
@@ -373,8 +621,8 @@ impl Core {
         })
     }
 
-    fn ensure_host_stopped(&self) -> Result<()> {
-        if self.host.is_running() {
+    fn ensure_host_stopped(&self, id: &str) -> Result<()> {
+        if self.runtime(id).is_running() {
             bail!("stop the server first");
         }
         Ok(())
@@ -382,20 +630,24 @@ impl Core {
 
     // --- config and setup ----------------------------------------------------------------
 
-    /// Writes `config/server.toml`.
+    /// Writes the server's `server.toml` (in its own folder).
     pub(crate) fn host_write_configs(
         &self,
+        id: &str,
         s: &HostSettings,
         pkg: &PackageInfo,
     ) -> Result<PathBuf> {
-        self.host_write_configs_carrying(s, pkg, None)
+        let dirs = self.host_dirs(id);
+        let previous = PreviousConfig::read(&pkg.dir, &dirs.config());
+        self.host_write_configs_carrying(id, s, pkg, previous.as_ref())
     }
 
-    /// Writes `config/server.toml` of `pkg` from its `server.example.toml`, the wizard's answers
-    /// and, when the package replaces another one, what the user changed in the old config
-    /// (see [`host::carry_over_config`]); settings new in this release get their defaults.
+    /// Writes the server's `server.toml` from the package's `server.example.toml`, the settings
+    /// and, when there is one, what the user changed in the config written before (see
+    /// [`host::carry_over_config`]); settings new in this release get their defaults.
     pub(crate) fn host_write_configs_carrying(
         &self,
+        id: &str,
         s: &HostSettings,
         pkg: &PackageInfo,
         previous: Option<&PreviousConfig>,
@@ -406,30 +658,32 @@ impl Core {
         if let Some(prev) = previous {
             match host::carry_over_config(&prev.example, &prev.config, &example) {
                 Ok(merged) => example = merged,
-                Err(e) => self.host.note(
+                Err(e) => self.runtime(id).note(
                     self.events.as_ref(),
                     &format!("the old config could not be carried over, using the defaults: {e:#}"),
                 ),
             }
         }
         let game_dir = self.install_dir()?;
-        let dirs = self.host_dirs();
-        std::fs::create_dir_all(dirs.data())?;
-        let db = dirs.database();
-        let final_cfg = config_path(&pkg.dir);
+        let dirs = self.host_dirs(id);
+        for d in [dirs.data(), dirs.mods(), dirs.config_backups()] {
+            std::fs::create_dir_all(d)?;
+        }
+        let cfg = dirs.config();
         write_atomic(
-            &final_cfg,
-            host::render_config(&example, s, &game_dir, &db)?.as_bytes(),
+            &cfg,
+            host::render_config(&example, s, &game_dir, &dirs)?.as_bytes(),
         )?;
-        Ok(final_cfg)
+        Ok(cfg)
     }
 
-    pub(crate) fn host_spec(&self, pkg: &PackageInfo, config: &str) -> StartSpec {
+    pub(crate) fn host_spec(&self, id: &str, pkg: &PackageInfo) -> StartSpec {
+        let dirs = self.host_dirs(id);
         StartSpec {
             exe: pkg.dir.join(host::server_exe_name(self.host_os())),
             cwd: pkg.dir.clone(),
-            config: PathBuf::from("config").join(config),
-            log_file: self.host_dirs().log_file(),
+            config: dirs.config(),
+            log_file: dirs.log_file(),
         }
     }
 
@@ -452,28 +706,14 @@ impl Core {
         Ok(view)
     }
 
-    /// Applies the wizard: writes the config, makes (or promotes) the admin account when a
-    /// password is given, and adds the server to Servers. The server must be stopped.
-    ///
-    /// The account is made with the one-shot commands `poe-server account create <name>
-    /// --password-stdin` (the password goes to the child's standard input, which is then closed)
-    /// and `poe-server account role <name> admin`, against the package folder and its database.
-    /// The server is not started; the password is on no command line.
-    pub async fn host_setup(&self, mut req: SetupRequest) -> Result<SetupResult> {
-        let password = std::mem::take(&mut req.admin_password);
-        let result = self.host_setup_inner(req, &password).await;
-        // Drop the plain text copy as early as possible.
-        let mut bytes = password.into_bytes();
-        for b in bytes.iter_mut() {
-            *b = 0;
-        }
-        result
-    }
-
-    async fn host_setup_inner(&self, req: SetupRequest, password: &str) -> Result<SetupResult> {
+    /// Applies the settings: writes the config and adds the server to Servers (My servers).
+    /// The server must be stopped. No account is made: the first admin is created in the
+    /// server's web admin.
+    pub async fn host_setup(&self, id: &str, req: SetupRequest) -> Result<SetupResult> {
+        self.host_known(id)?;
         let _busy = self.host_begin()?;
-        self.ensure_host_stopped()?;
-        let stored = self.host_settings()?;
+        self.ensure_host_stopped(id)?;
+        let stored = self.host_settings(id)?;
         let mut s = HostSettings {
             package_dir: stored.package_dir.clone(),
             profile_id: stored.profile_id.clone(),
@@ -481,154 +721,114 @@ impl Core {
             ..req.settings
         };
         s.validate()?;
-        let make_admin = !password.is_empty();
-        if make_admin {
-            if s.admin_name.is_empty() {
-                bail!("enter a name for the admin account");
+        for other in self.host_others(id) {
+            let clash = s.port_clashes(&other);
+            if !clash.is_empty() {
+                bail!(
+                    "{} uses port {} already: pick other ports",
+                    other.server_name,
+                    clash.iter().map(u16::to_string).collect::<Vec<_>>().join(", ")
+                );
             }
-            if password.chars().count() < 8 || password.chars().count() > 256 {
-                bail!("the admin password is 8 to 256 characters");
-            }
-            // It travels as one line on the server's standard input.
-            if password.contains(['\n', '\r']) {
-                bail!("the admin password cannot contain a line break");
-            }
-        } else if !s.configured {
-            bail!("enter a password for the admin account");
         }
         let pkg = self.host_package(&s)?;
         let install = self.install_dir()?;
         if !verify::looks_installed(&install, &self.version()) {
             bail!(
                 "the game is not installed in {}: the server reads its game data from there. \
-                 Install it first (Install page)",
+                 Install it first (Library)",
                 install.display()
             );
         }
-        let busy = host::busy_ports(&s);
-        if !busy.is_empty() {
-            bail!(
-                "these ports are already in use: {}. Choose other ones",
-                busy.join(", ")
-            );
+        let ports_changed = s.ports() != stored.ports() || !stored.configured;
+        if ports_changed {
+            let busy = host::busy_ports(&s);
+            if !busy.is_empty() {
+                bail!(
+                    "these ports are already in use: {}. Choose other ones",
+                    busy.join(", ")
+                );
+            }
         }
-
-        self.host_step("writing the server config");
-        let config_file = self.host_write_configs(&s, &pkg)?;
-        let mut admin_existed = false;
-        if make_admin {
-            admin_existed = self.host_make_admin(&s, &pkg, password).await?;
-        }
+        self.host_step(id, "writing the server config");
+        let config_file = self.host_write_configs(id, &s, &pkg)?;
         s.configured = true;
         let profile = self.host_ensure_profile(&mut s)?;
-        self.host_save(&s)?;
-        self.host_step("done");
+        self.host_save(id, &s)?;
+        self.host_step(id, "settings applied");
         Ok(SetupResult {
             profile,
-            admin_existed,
             config_file,
         })
     }
 
-    /// Creates the admin account and gives it the admin role, with one-shot `poe-server`
-    /// commands (no server start). Returns whether the account existed already: it is then
-    /// only promoted and its password stays.
-    async fn host_make_admin(
-        &self,
-        s: &HostSettings,
-        pkg: &PackageInfo,
-        password: &str,
-    ) -> Result<bool> {
-        let spec = self.host_spec(pkg, "server.toml");
-        self.host_step(&format!("creating the account {}", s.admin_name));
-        // One line on the child's standard input; wiped as soon as it is written.
-        let mut line = Vec::with_capacity(password.len() + 1);
-        line.extend_from_slice(password.as_bytes());
-        line.push(b'\n');
-        let created = run_oneshot_stdin(
-            &spec.exe,
-            &spec.cwd,
-            &spec.config,
-            &["account", "create", &s.admin_name, "--password-stdin"],
-            Some(&line),
-        )
-        .await;
-        line.iter_mut().for_each(|b| *b = 0);
-        let existed = match created {
-            Ok(_) => false,
-            // The server answers with the account error's text.
-            Err(e) if e.to_string().contains("that username is taken") => true,
-            Err(e) => bail!("creating the admin account failed: {e:#}"),
-        };
-        self.host_step(&format!("giving {} the admin role", s.admin_name));
-        run_oneshot_stdin(
-            &spec.exe,
-            &spec.cwd,
-            &spec.config,
-            &["account", "role", &s.admin_name, "admin"],
-            None,
-        )
-        .await?;
-        Ok(existed)
-    }
-
     // --- run ------------------------------------------------------------------------------
 
-    pub async fn host_start(&self) -> Result<()> {
+    pub async fn host_start(&self, id: &str) -> Result<()> {
         self.host_private_only()?;
-        let s = self.host_settings()?;
+        let s = self.host_settings(id)?;
         if !s.configured {
-            bail!("set the server up first");
+            bail!("apply the server's settings first");
         }
-        if self.host.is_running() {
+        let rt = self.runtime(id);
+        if rt.is_running() {
             bail!("the server is already running");
         }
         let pkg = self.host_package(&s)?;
         let install = self.install_dir()?;
         if !verify::looks_installed(&install, &self.version()) {
             bail!(
-                "the game is not installed in {}: install it first (Install page)",
+                "the game is not installed in {}: install it first (Library)",
                 install.display()
             );
         }
-        if !config_path(&pkg.dir).is_file() {
-            self.host_write_configs(&s, &pkg)?;
+        if !self.host_dirs(id).config().is_file() {
+            self.host_write_configs(id, &s, &pkg)?;
+        }
+        for other_id in self.running_hosts() {
+            if other_id != id
+                && let Ok(o) = self.host_settings(&other_id)
+                && !s.port_clashes(&o).is_empty()
+            {
+                bail!("{} runs on the same ports: stop it or change the ports", o.server_name);
+            }
         }
         let busy = host::busy_ports(&s);
         if !busy.is_empty() {
             bail!("these ports are already in use: {}", busy.join(", "));
         }
         // The database is not in use yet: the best moment for a safe copy.
-        self.backup_auto();
-        self.host
-            .start(self.events.clone(), &self.host_spec(&pkg, "server.toml"))?;
+        self.backup_auto(id);
+        rt.start(self.events.clone(), &self.host_spec(id, &pkg))?;
         Ok(())
     }
 
-    pub async fn host_stop(&self) -> Result<()> {
+    pub async fn host_stop(&self, id: &str) -> Result<()> {
         // SIGTERM, up to the grace time for the server's own shutdown, then a hard kill.
-        self.host
+        self.runtime(id)
             .stop(crate::host_run::STOP_GRACE + Duration::from_secs(10))
             .await
     }
 
-    /// Start with the launcher when the user asked for that. Failures go to the server log.
+    /// Starts the servers the user asked to start with the launcher. Failures go to their logs.
     pub async fn host_autostart(&self) {
-        let Ok(s) = self.host_settings() else { return };
-        if !(s.autostart && s.configured) {
-            return;
-        }
-        if let Err(e) = self.host_start().await {
-            self.host
-                .note(self.events.as_ref(), &format!("autostart failed: {e:#}"));
+        for id in self.host_ids() {
+            let Ok(s) = self.host_settings(&id) else { continue };
+            if !(s.autostart && s.configured) {
+                continue;
+            }
+            if let Err(e) = self.host_start(&id).await {
+                self.runtime(&id)
+                    .note(self.events.as_ref(), &format!("autostart failed: {e:#}"));
+            }
         }
     }
 
     /// Saves the autostart choice (the only setting that can change while the server runs).
-    pub fn host_set_autostart(&self, on: bool) -> Result<HostSettings> {
-        let mut s = self.host_settings()?;
+    pub fn host_set_autostart(&self, id: &str, on: bool) -> Result<HostSettings> {
+        let mut s = self.host_settings(id)?;
         s.autostart = on;
-        self.host_save(&s)?;
+        self.host_save(id, &s)?;
         Ok(s)
     }
 }
@@ -640,7 +840,10 @@ fn ensure_file(p: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Used by tests and the app to stop the server on the way out.
+/// Used by tests and the app to stop every hosted server on the way out.
 pub fn stop_on_exit(core: &Arc<Core>) {
-    core.host.stop_blocking();
+    let all: Vec<HostRuntime> = core.hosts.lock().unwrap().values().cloned().collect();
+    for rt in all {
+        rt.stop_blocking();
+    }
 }

@@ -42,20 +42,22 @@ export interface HostProgress {
   total: number;
 }
 
-/** The hosted server's events: run state, log lines, download progress, setup steps, a new package. */
-export async function listenHost(h: {
-  onState: Handler<RunState>;
-  onLog: Handler<string>;
-  onProgress: Handler<HostProgress>;
-  onStep: Handler<string>;
-  onInstalled: Handler<void>;
+/** A hosted server's events (`id` picks the server): run state, log lines, download progress,
+ * setup steps, a new package. `id` null: every server's run state (the Host list). */
+export async function listenHost(id: string | null, h: {
+  onState?: (state: RunState, id: string) => void;
+  onLog?: Handler<string>;
+  onProgress?: Handler<HostProgress>;
+  onStep?: Handler<string>;
+  onInstalled?: Handler<void>;
 }): Promise<UnlistenFn> {
+  const mine = (p: { id?: string }) => id === null || p.id === id;
   const subs = await Promise.all([
-    listen<RunState>('host:status', (e) => h.onState(e.payload)),
-    listen<{ line: string }>('host:log', (e) => h.onLog(e.payload.line)),
-    listen<HostProgress>('host:progress', (e) => h.onProgress(e.payload)),
-    listen<{ step: string }>('host:setup', (e) => h.onStep(e.payload.step)),
-    listen<unknown>('host:installed', () => h.onInstalled()),
+    listen<{ id: string; run: RunState }>('host:status', (e) => mine(e.payload) && h.onState?.(e.payload.run, e.payload.id)),
+    listen<{ id: string; line: string }>('host:log', (e) => mine(e.payload) && h.onLog?.(e.payload.line)),
+    listen<HostProgress & { id: string }>('host:progress', (e) => mine(e.payload) && h.onProgress?.(e.payload)),
+    listen<{ id: string; step: string }>('host:setup', (e) => mine(e.payload) && h.onStep?.(e.payload.step)),
+    listen<{ id: string }>('host:installed', (e) => mine(e.payload) && h.onInstalled?.()),
   ]);
   return () => subs.forEach((u) => u());
 }

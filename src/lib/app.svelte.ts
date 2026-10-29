@@ -33,10 +33,12 @@ class AppState {
   /** Project news for Home (loaded once per start, and when the user presses refresh). */
   news = $state<NewsFeed | null>(null);
   newsLoading = $state(false);
-  /** Is a newer server release on offer for the installed hosted server? Quiet; null until asked. */
-  serverUpdate = $state<ServerUpdateCheck | null>(null);
-  serverUpdateLoading = false;
-  private serverUpdateLast: { at: number; game: string } | null = null;
+  /** Is a newer server release on offer for a hosted server (by id)? Quiet; absent until asked. */
+  serverUpdates = $state<Record<string, ServerUpdateCheck>>({});
+  private serverUpdateLoading = new Set<string>();
+  private serverUpdateLast: Record<string, { at: number; game: string }> = {};
+  /** The hosted servers' ids (Servers > Host keeps it fresh). */
+  hostIds = $state<string[]>([]);
   /** The disk-space check shown before and during an install. */
   space = $state<SpaceCheck | null>(null);
 
@@ -98,8 +100,8 @@ class AppState {
     void this.refreshRoles();
     void this.checkServers();
     void this.loadNews();
-    // A newer server release for the hosted server: quiet, once at start (and on Host / Home).
-    void this.checkServerUpdate();
+    // A newer server release for the hosted servers: quiet, once at start (and on Host / Home).
+    void this.checkServerUpdates();
     // A newer hook release: look once at start, quietly.
     if (this.hook?.installed) void this.checkHook(true);
     // Launcher self-update: look once at start; a failure is a quiet state, never a toast.
@@ -140,30 +142,47 @@ class AppState {
     this.newsLoading = false;
   }
 
+  /** The first hosted server with an update on offer (Home shows one line for it). */
+  get serverUpdate(): ServerUpdateCheck | null {
+    return Object.values(this.serverUpdates).find((u) => u.update_available) ?? null;
+  }
+
   /**
-   * Looks for a newer server release (the hosted server's installed package against GitHub).
+   * Looks for a newer server release (a hosted server's installed package against GitHub).
    * Quiet and throttled: at start, and each time Host or Home opens, but GitHub is asked at
-   * most every 10 minutes per game version unless `force` (a failure is in `serverUpdate.error`).
+   * most every 10 minutes per server and game version unless `force` (a failure is in `error`).
    */
-  async checkServerUpdate(force = false): Promise<void> {
-    if (this.official || this.serverUpdateLoading) return;
+  async checkServerUpdate(id: string, force = false): Promise<void> {
+    if (this.official || this.serverUpdateLoading.has(id)) return;
     const now = Math.floor(Date.now() / 1000);
-    if (!updateCheckDue(this.serverUpdateLast, this.version, now, force)) return;
-    this.serverUpdateLoading = true;
+    if (!updateCheckDue(this.serverUpdateLast[id] ?? null, this.version, now, force)) return;
+    this.serverUpdateLoading.add(id);
     const game = this.version;
     try {
-      this.serverUpdate = await ipc.hostUpdateCheck();
-      this.serverUpdateLast = { at: now, game };
+      this.serverUpdates = { ...this.serverUpdates, [id]: await ipc.hostUpdateCheck(id) };
+      this.serverUpdateLast[id] = { at: now, game };
     } catch {
       /* quiet: keep what is shown */
     }
-    this.serverUpdateLoading = false;
+    this.serverUpdateLoading.delete(id);
   }
 
-  /** The installed server changed (installed, updated): the old answer no longer holds. */
-  forgetServerUpdate(): void {
-    this.serverUpdate = null;
-    this.serverUpdateLast = null;
+  /** Every hosted server's update check (quiet, throttled). */
+  async checkServerUpdates(force = false): Promise<void> {
+    if (this.official) return;
+    try {
+      this.hostIds = (await ipc.hostList()).map((h) => h.id);
+    } catch {
+      return;
+    }
+    await Promise.all(this.hostIds.map((id) => this.checkServerUpdate(id, force)));
+  }
+
+  /** A server's package changed (installed, updated): the old answer no longer holds. */
+  forgetServerUpdate(id: string): void {
+    const { [id]: _gone, ...rest } = this.serverUpdates;
+    this.serverUpdates = rest;
+    delete this.serverUpdateLast[id];
   }
 
   async refreshInfo(): Promise<void> {
@@ -372,14 +391,15 @@ class AppState {
       if (list) {
         this.hookCheck = null;
         this.hookError = '';
-        this.forgetServerUpdate();
+        this.serverUpdates = {};
+        this.serverUpdateLast = {};
         await Promise.all([this.refreshSettings(), this.refreshStatus(), this.refreshInfo(), this.refreshHook()]);
         if (this.hook?.installed) void this.checkHook(true);
         // A fresh install log and verification belong to the other version.
         this.install = initialInstall();
         toasts.show('ok', `Game version: ${versionLabel(version)}`);
         void this.checkServers();
-        void this.checkServerUpdate();
+        void this.checkServerUpdates();
       }
     } finally {
       this.switching = false;
