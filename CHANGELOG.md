@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0
+
+- **Client 0.5.5e Hotfix 1 only.** 0.5.5e is no longer offered; saved settings for it (its install folder, a selected 0.5.5e) are dropped when the settings are read. The nested client hook is hook-v0.5.0.
+- **Several hosted servers.** Servers has a third tab, **Host**: every server on this computer with its state, ports, Start/Stop and Manage, and **Create a server** (a name; the next free ports, +10 per server). Each server has its own folder (`<data>/servers/<id>/`: database, its own `server.toml`, mods, backups, log) and settings (`<config>/servers/<id>.json`); downloaded server programs are shared. The single server of earlier versions becomes `s1` by itself. Hosted servers also appear in *My servers* with a *hosted* badge and a quick Start.
+- **Delete means delete.** Deleting a hosted server (Settings > Danger zone, or *Remove* on its row) asks you to type its name, then stops it and removes its folder, settings and Servers entry.
+- **Manage** has four tabs: *Overview* (Start/Stop, Open web admin, **usage**: CPU, memory, tick time, network, uptime, version; the log), *Settings* (one column of sections that fold with an arrow; *Start with the launcher* moved here; an Apply bar when something changed), *Program*, *Backups*. The separate Log tab is gone. A stale "autostart failed" note disappears once a fitting package is installed.
+- **No accounts in the launcher.** A new server's first admin is created in its web admin (Open web admin leads there); players create accounts on the server's register page, which *No account yet? Create one* opens. Play writes that page into the hook config, so the game's own *Create account* button opens it too.
+- **Calmer pages.** Play's setup step 3 is one *Set up a server* button with a chooser; News is one feed with filter chips; Library's Game tab shows a status card, a slim client hook card and folding *Download or repair* and *Details* sections; Settings is in top tabs (General, Game & Proton, Steam, Mods, Updates & About, Advanced) and saves each change on its own; About moved into Settings; the sidebar foot shows only the launcher version.
+
 ## 0.5.0
 
 - Knows client 0.5.5e Hotfix 1 (`versions/0.5.5e.hotfix1.toml`); the nested client hook moved to hook-v0.4.0 (was hook-v0.2.0+3).
