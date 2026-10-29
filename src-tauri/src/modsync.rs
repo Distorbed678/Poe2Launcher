@@ -12,7 +12,7 @@
 //!
 //! ```json
 //! { "id": "faster-rolls", "version": "1.0.0", "side": "both", "sha256": "<64 hex>", "size": 48210,
-//!   "required": true, "hook_api": 1, "game_versions": ["0.5.5e"],
+//!   "required": true, "hook_api": 1, "game_versions": ["0.5.5e.hotfix1"],
 //!   "sources": [ { "type": "server", "path": "/api/v1/mods/faster-rolls/1.0.0.zip" },
 //!                { "type": "url", "url": "https://example.org/faster-rolls-1.0.0.zip" } ],
 //!   "name": "Faster rolls", "authors": ["..."], "description": "..." }
@@ -666,7 +666,7 @@ mod tests {
     fn the_advertisement_is_read_from_an_array_or_the_analysis_object() {
         let a = json!([entry(
             "aa-mod",
-            json!({"required": false, "hook_api": 1, "name": "Aa", "game_versions": ["0.5.5e"]})
+            json!({"required": false, "hook_api": 1, "name": "Aa", "game_versions": ["0.5.5e.hotfix1"]})
         )]);
         let ad = parse_advertisement(&a);
         assert_eq!(ad.mods.len(), 1);
@@ -701,13 +701,13 @@ mod tests {
     #[test]
     fn an_old_server_without_mods_or_with_junk_does_not_break_the_status() {
         let info: crate::api::ServerInfo = serde_json::from_str(
-            r#"{"name":"n","version":"0.5.5e","cluster_id":"c","online":0,"open_registration":false,
+            r#"{"name":"n","version":"0.5.5e.hotfix1","cluster_id":"c","online":0,"open_registration":false,
                 "login_host":"h","login_port":20481,"uptime_secs":3}"#,
         )
         .unwrap();
         assert!(info.mods.mods.is_empty());
         let info: crate::api::ServerInfo = serde_json::from_str(
-            r#"{"name":"n","version":"0.5.5e","cluster_id":"c","online":0,"open_registration":false,
+            r#"{"name":"n","version":"0.5.5e.hotfix1","cluster_id":"c","online":0,"open_registration":false,
                 "login_host":"h","login_port":20481,"uptime_secs":3,"mods":42}"#,
         )
         .unwrap();
@@ -810,7 +810,7 @@ mod tests {
         });
         let p = profile("http://127.0.0.1:8080", false);
         let by: std::collections::BTreeMap<String, SyncState> =
-            compare(&ads, &cache, &p, "0.5.5e", 1)
+            compare(&ads, &cache, &p, "0.5.5e.hotfix1", 1)
                 .into_iter()
                 .map(|m| (m.id, m.state))
                 .collect();

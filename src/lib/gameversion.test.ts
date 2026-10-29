@@ -11,27 +11,27 @@ const v = (version: string, extra: Partial<GameVersion> = {}): GameVersion => ({
   installed: false,
   ...extra,
 });
-const list = [v('official'), v('0.6.0', { newest: true }), v('0.5.5e')];
+const list = [v('official'), v('0.6.0', { newest: true }), v('0.5.5e.hotfix1')];
 
 describe('game versions', () => {
   it('names the official entry and the private ones', () => {
     expect(isOfficial('official')).toBe(true);
-    expect(isOfficial('0.5.5e')).toBe(false);
+    expect(isOfficial('0.5.5e.hotfix1')).toBe(false);
     expect(versionLabel('official')).toBe('Official (read-only)');
     expect(versionLabel(list[1]!)).toBe('0.6.0');
     expect(versionSub(list[0]!)).toMatch(/Official/);
     expect(versionSub(list[1]!)).toMatch(/newest/);
     expect(versionSub(list[2]!)).toBe('Private server');
-    expect(privateVersions(list).map((x) => x.version)).toEqual(['0.6.0', '0.5.5e']);
+    expect(privateVersions(list).map((x) => x.version)).toEqual(['0.6.0', '0.5.5e.hotfix1']);
   });
 
   it('compares the server version with the selection', () => {
-    expect(serverCompat('0.5.5e', '0.5.5e', list)).toEqual({ kind: 'ok' });
-    expect(serverCompat('0.6.0', '0.5.5e', list)).toEqual({ kind: 'other', version: '0.6.0' });
-    expect(serverCompat('0.7.0', '0.5.5e', list)).toEqual({ kind: 'unsupported', version: '0.7.0' });
-    expect(serverCompat(undefined, '0.5.5e', list)).toEqual({ kind: 'unknown' });
+    expect(serverCompat('0.5.5e.hotfix1', '0.5.5e.hotfix1', list)).toEqual({ kind: 'ok' });
+    expect(serverCompat('0.6.0', '0.5.5e.hotfix1', list)).toEqual({ kind: 'other', version: '0.6.0' });
+    expect(serverCompat('0.7.0', '0.5.5e.hotfix1', list)).toEqual({ kind: 'unsupported', version: '0.7.0' });
+    expect(serverCompat(undefined, '0.5.5e.hotfix1', list)).toEqual({ kind: 'unknown' });
     // "official" is never a server version.
-    expect(serverCompat('official', '0.5.5e', list)).toEqual({ kind: 'unsupported', version: 'official' });
+    expect(serverCompat('official', '0.5.5e.hotfix1', list)).toEqual({ kind: 'unsupported', version: 'official' });
   });
 
   it('only a known other version blocks Play', () => {

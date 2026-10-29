@@ -213,7 +213,7 @@ mod tests {
     fn info(host: &str) -> ServerInfo {
         ServerInfo {
             name: "Test Realm".into(),
-            version: "0.5.5e".into(),
+            version: "0.5.5e.hotfix1".into(),
             cluster_id: "c".into(),
             online: 0,
             open_registration: true,

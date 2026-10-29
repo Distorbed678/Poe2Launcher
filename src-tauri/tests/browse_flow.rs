@@ -79,7 +79,7 @@ async fn mock_news() -> (NewsSources, Arc<GhState>) {
                         "Poe2Launcher" => vec![release("v0.2.0", "2026-10-20T10:00:00Z", "- new look"), release("v0.1.1", "2026-10-10T10:00:00Z", "")],
                         "Poe2Server" => vec![
                             release("server-v0.9.0", "2026-10-21T10:00:00Z", "movement"),
-                            release("dat-schema-0.5.5e", "2026-10-21T12:00:00Z", "not news"),
+                            release("dat-schema-0.5.5e.hotfix1", "2026-10-21T12:00:00Z", "not news"),
                         ],
                         "Poe2ClientHook" => vec![release("hook-v0.2.0", "2026-10-19T10:00:00Z", "hook notes")],
                         _ => vec![],
@@ -192,7 +192,7 @@ fn server_app(
         "/api/v1/server",
         get(move || async move {
             tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-            let mut v = json!({"name": name, "version": "0.5.5e", "cluster_id": "c", "online": online,
+            let mut v = json!({"name": name, "version": "0.5.5e.hotfix1", "cluster_id": "c", "online": online,
                 "open_registration": true, "login_host": "play.example", "login_port": 20481,
                 "instance_port": 6112, "gateway_region": "EU", "uptime_secs": 100});
             if let Some(m) = motd {
@@ -205,7 +205,7 @@ fn server_app(
 
 fn entry(id: &str, addr: &str) -> Value {
     json!({"id": id, "name": id, "address": addr, "description": "d", "region": "EU",
-        "game_version": "0.5.5e", "tags": ["pve"], "contact": "c"})
+        "game_version": "0.5.5e.hotfix1", "tags": ["pve"], "contact": "c"})
 }
 
 #[tokio::test]

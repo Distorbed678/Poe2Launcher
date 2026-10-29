@@ -46,13 +46,13 @@ fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {
 
 fn client_toml(id: &str, version: &str) -> String {
     format!(
-        "manifest_version = 1\nid = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\n[game]\nversions = [\"0.5.5e\"]\nhook_api = 1\n[entry]\ndll = \"{id}.dll\"\n"
+        "manifest_version = 1\nid = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\n[game]\nversions = [\"0.5.5e.hotfix1\"]\nhook_api = 1\n[entry]\ndll = \"{id}.dll\"\n"
     )
 }
 
 fn both_toml(id: &str, version: &str) -> String {
     format!(
-        "manifest_version = 2\nid = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\nside = \"both\"\n[game]\nversions = [\"0.5.5e\"]\n[client]\ndll = \"client/{id}.dll\"\nhook_api = 1\n[server]\nserver_api = 1\n[server.library]\nlinux = \"server/lib{id}.so\"\nwindows = \"server/{id}.dll\"\n"
+        "manifest_version = 2\nid = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\nside = \"both\"\n[game]\nversions = [\"0.5.5e.hotfix1\"]\n[client]\ndll = \"client/{id}.dll\"\nhook_api = 1\n[server]\nserver_api = 1\n[server.library]\nlinux = \"server/lib{id}.so\"\nwindows = \"server/{id}.dll\"\n"
     )
 }
 
@@ -92,7 +92,7 @@ impl Realm {
     /// Advertises (and serves) a package under its true hash.
     fn offer(&self, id: &str, version: &str, side: &str, zip: Vec<u8>, extra: Value) {
         let mut ad = json!({"id": id, "version": version, "side": side, "sha256": sha(&zip),
-            "size": zip.len(), "required": true, "hook_api": 1, "game_versions": ["0.5.5e"], "name": id});
+            "size": zip.len(), "required": true, "hook_api": 1, "game_versions": ["0.5.5e.hotfix1"], "name": id});
         ad.as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
@@ -116,7 +116,7 @@ async fn spawn_realm(realm: Arc<Realm>) -> String {
         .route(
             "/api/v1/server",
             get(|State(r): State<Arc<Realm>>| async move {
-                Json(json!({"name": "Mock Realm", "version": "0.5.5e", "cluster_id": "c", "online": 1,
+                Json(json!({"name": "Mock Realm", "version": "0.5.5e.hotfix1", "cluster_id": "c", "online": 1,
                     "open_registration": true, "login_host": "127.0.0.1", "login_port": 29481,
                     "instance_port": 29112, "uptime_secs": 5, "mods": r.ads.lock().unwrap().clone()}))
             }),
@@ -153,8 +153,8 @@ fn env() -> Env {
         events.clone(),
     )
     .unwrap();
-    // The fixture mods and realms are made for 0.5.5e (not necessarily the newest version).
-    core.set_game_version("0.5.5e").unwrap();
+    // The fixture mods and realms are made for 0.5.5e.hotfix1 (not necessarily the newest version).
+    core.set_game_version("0.5.5e.hotfix1").unwrap();
     Env { tmp, core }
 }
 
@@ -657,7 +657,7 @@ async fn the_mod_browser_reads_the_index_installs_a_version_and_survives_offline
         up: true.into(),
     });
     let base = spawn_index(s.clone()).await;
-    let ver = |v: &str, zip: &[u8], file: &str| json!({"version": v, "game_versions": ["0.5.5e"], "hook_api": 1, "sha256": sha(zip), "size": zip.len(), "url": format!("{base}/dl/{file}")});
+    let ver = |v: &str, zip: &[u8], file: &str| json!({"version": v, "game_versions": ["0.5.5e.hotfix1"], "hook_api": 1, "sha256": sha(zip), "size": zip.len(), "url": format!("{base}/dl/{file}")});
     s.files
         .lock()
         .unwrap()

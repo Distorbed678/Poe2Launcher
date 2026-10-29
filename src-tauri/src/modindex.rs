@@ -531,7 +531,7 @@ mod tests {
     use super::*;
 
     fn ver(v: &str, extra: Value) -> Value {
-        let mut o = json!({"version": v, "game_versions": ["0.5.5e"], "hook_api": 1, "sha256": "b".repeat(64), "size": 1234, "url": format!("https://github.com/x/y/releases/download/v{v}/m-{v}.zip")});
+        let mut o = json!({"version": v, "game_versions": ["0.5.5e.hotfix1"], "hook_api": 1, "sha256": "b".repeat(64), "size": 1234, "url": format!("https://github.com/x/y/releases/download/v{v}/m-{v}.zip")});
         o.as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());

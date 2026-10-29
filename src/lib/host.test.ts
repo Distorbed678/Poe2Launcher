@@ -111,7 +111,7 @@ describe('run state and log', () => {
 describe('server updates', () => {
   const check = (over: Partial<ServerUpdateCheck> = {}): ServerUpdateCheck => ({
     installed: '0.2.0',
-    release: { repo: 'Distorbed678/Poe2Server', tag: 'server-v0.3.0', version: '0.3.0', game_version: '0.5.5e', prerelease: false, asset_name: 'a', asset_url: 'u', size: 1, sha256_url: 's', notes: '- new', html_url: null },
+    release: { repo: 'Distorbed678/Poe2Server', tag: 'server-v0.3.0', version: '0.3.0', game_version: '0.5.5e.hotfix1', prerelease: false, asset_name: 'a', asset_url: 'u', size: 1, sha256_url: 's', notes: '- new', html_url: null },
     update_available: true,
     error: null,
     checked_at: 1000,
@@ -126,12 +126,12 @@ describe('server updates', () => {
   });
 
   it('asks again after the TTL, for another game version, or when forced', () => {
-    const last = { at: 1000, game: '0.5.5e' };
-    expect(updateCheckDue(null, '0.5.5e', 1001)).toBe(true);
-    expect(updateCheckDue(last, '0.5.5e', 1000 + UPDATE_CHECK_TTL - 1)).toBe(false);
-    expect(updateCheckDue(last, '0.5.5e', 1000 + UPDATE_CHECK_TTL)).toBe(true);
+    const last = { at: 1000, game: '0.5.5e.hotfix1' };
+    expect(updateCheckDue(null, '0.5.5e.hotfix1', 1001)).toBe(true);
+    expect(updateCheckDue(last, '0.5.5e.hotfix1', 1000 + UPDATE_CHECK_TTL - 1)).toBe(false);
+    expect(updateCheckDue(last, '0.5.5e.hotfix1', 1000 + UPDATE_CHECK_TTL)).toBe(true);
     expect(updateCheckDue(last, '0.6.0', 1001)).toBe(true);
-    expect(updateCheckDue(last, '0.5.5e', 1001, true)).toBe(true);
+    expect(updateCheckDue(last, '0.5.5e.hotfix1', 1001, true)).toBe(true);
   });
 
   it('describes the steps, which depend on the server running', () => {

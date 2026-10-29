@@ -167,7 +167,7 @@ mod tests {
             assert!(reject_steam_paths(Path::new(bad), "dir").is_err());
         }
         for good in [
-            "/home/u/.local/share/poe2-launcher/game/0.5.5e",
+            "/home/u/.local/share/poe2-launcher/game/0.5.5e.hotfix1",
             "/home/u/Games/Path of Exile 2",
             "/data/compatdata/12345",
             "relative/dir",
@@ -184,8 +184,8 @@ mod tests {
         let d = Dirs::under(Path::new("/r"));
         assert_eq!(d.settings_file(), Path::new("/r/config/settings.json"));
         assert_eq!(
-            d.default_install_dir("0.5.5e"),
-            Path::new("/r/data/game/0.5.5e")
+            d.default_install_dir("0.5.5e.hotfix1"),
+            Path::new("/r/data/game/0.5.5e.hotfix1")
         );
         assert!(!is_steam_path(&d.prefix_dir()));
     }

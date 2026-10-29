@@ -2,18 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { currentStep, hookAction, hookReady, hookSummary, setupNeeded, setupSteps } from './hook';
 import type { HookCheck, HookStatus, InstalledHook } from './types';
 
-const installed: InstalledHook = { dir: '/h/0.2.0', name: 'n', version: '0.2.0', game_versions: ['0.5.5e'], mod_abi: 1, commit: 'abc' };
+const installed: InstalledHook = { dir: '/h/0.2.0', name: 'n', version: '0.2.0', game_versions: ['0.5.5e.hotfix1'], mod_abi: 1, commit: 'abc' };
 
 function status(over: Partial<HookStatus> = {}): HookStatus {
   return {
-    game_version: '0.5.5e', repo: 'x/y', source: { kind: 'missing' }, dll_dir: '/d', manual_dir: null,
+    game_version: '0.5.5e.hotfix1', repo: 'x/y', source: { kind: 'missing' }, dll_dir: '/d', manual_dir: null,
     installed: null, other_installed: [], busy: false, ...over,
   };
 }
 
 const check = (update: boolean): HookCheck => ({
   update_available: update,
-  release: { tag: 'hook-v0.3.0', version: '0.3.0', game_versions: ['0.5.5e'], prerelease: false, asset_name: 'a', asset_url: 'u', size: 1, sha256_url: 's' },
+  release: { tag: 'hook-v0.3.0', version: '0.3.0', game_versions: ['0.5.5e.hotfix1'], prerelease: false, asset_name: 'a', asset_url: 'u', size: 1, sha256_url: 's' },
 });
 
 describe('hook summary', () => {

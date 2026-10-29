@@ -175,7 +175,7 @@ fn check_server(r: RawServer, allow_local: bool) -> Result<ListedServer, String>
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
     {
         return Err(format!(
-            "{id}: game_version is required (for example 0.5.5e)"
+            "{id}: game_version is required (for example 0.5.5e.hotfix1)"
         ));
     }
     if r.tags.len() > MAX_TAGS || !r.tags.iter().all(|t| valid_tag(t)) {
@@ -445,7 +445,7 @@ mod tests {
     fn entry(extra: &str) -> String {
         format!(
             r#"{{"id":"example-realm","name":"Example Realm","address":"https://play.example.org",
-                "description":"A realm","region":"EU","game_version":"0.5.5e","tags":["pve"],
+                "description":"A realm","region":"EU","game_version":"0.5.5e.hotfix1","tags":["pve"],
                 "contact":"discord.gg/x"{extra}}}"#
         )
     }
@@ -503,7 +503,7 @@ mod tests {
     #[test]
     fn bad_entries_are_skipped_one_by_one() {
         let bad_id = entry("").replace("example-realm", "Bad Id");
-        let no_version = entry("").replace(r#""game_version":"0.5.5e","#, "");
+        let no_version = entry("").replace(r#""game_version":"0.5.5e.hotfix1","#, "");
         let many_tags = entry("").replace(r#"["pve"]"#, r#"["a","b","c","d","e","f","g","h","i"]"#);
         let upper_tag = entry("").replace(r#"["pve"]"#, r#"["PvE"]"#);
         let long_name = entry("").replace("Example Realm", &"n".repeat(65));

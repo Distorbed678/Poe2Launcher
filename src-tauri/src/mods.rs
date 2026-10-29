@@ -347,7 +347,7 @@ mod tests {
         let v1 = parse(&manifest_text(
             "a-mod",
             "1.0.0",
-            "[game]\nversions=[\"0.5.5e\"]\nhook_api=1\n[entry]\ndll=\"a.dll\"\n",
+            "[game]\nversions=[\"0.5.5e.hotfix1\"]\nhook_api=1\n[entry]\ndll=\"a.dll\"\n",
         ));
         assert_eq!(v1.side, Side::Client);
         let v2 = parse(
@@ -391,17 +391,17 @@ mod tests {
         let m = parse(&manifest_text(
             "a-mod",
             "1.0.0",
-            "[game]\nversions=[\"0.5.5e\"]\nhook_api=1\n[entry]\ndll=\"a.dll\"\n",
+            "[game]\nversions=[\"0.5.5e.hotfix1\"]\nhook_api=1\n[entry]\ndll=\"a.dll\"\n",
         ));
-        assert_eq!(compat(&m, "0.5.5e", 1), Compat::Ok);
+        assert_eq!(compat(&m, "0.5.5e.hotfix1", 1), Compat::Ok);
         assert_eq!(
             compat(&m, "0.4.0", 1),
             Compat::WrongGame {
-                supported: vec!["0.5.5e".into()]
+                supported: vec!["0.5.5e.hotfix1".into()]
             }
         );
         assert_eq!(
-            compat(&m, "0.5.5e", 2),
+            compat(&m, "0.5.5e.hotfix1", 2),
             Compat::HookApiOld { needs: 1, have: 2 }
         );
         let newer = parse(&manifest_text(
@@ -410,17 +410,17 @@ mod tests {
             "[game]\nhook_api=3\n[entry]\ndll=\"a.dll\"\n",
         ));
         assert_eq!(
-            compat(&newer, "0.5.5e", 1),
+            compat(&newer, "0.5.5e.hotfix1", 1),
             Compat::HookApiTooNew { needs: 3, have: 1 }
         );
         // v1 leniency is gone: the loader refuses a DLL without an ABI, so the launcher does.
         let none = parse(&manifest_text("d-mod", "1.0.0", "[entry]\ndll=\"a.dll\"\n"));
         assert_eq!(
-            compat(&none, "0.5.5e", 1),
+            compat(&none, "0.5.5e.hotfix1", 1),
             Compat::HookApiMissing { have: 1 }
         );
         let data = parse(&manifest_text("e-mod", "1.0.0", ""));
-        assert_eq!(compat(&data, "0.5.5e", 1), Compat::Unspecified);
+        assert_eq!(compat(&data, "0.5.5e.hotfix1", 1), Compat::Unspecified);
         assert!(compat(&m, "0.4.0", 1).overridable());
         assert!(!Compat::HookApiOld { needs: 1, have: 2 }.overridable());
         assert!(

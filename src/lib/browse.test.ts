@@ -3,12 +3,12 @@ import { allRegions, allTags, contactLink, defaultFilter, effectiveVersion, exis
 import type { ListedServer, ProbeResult, ProfileView, ServerInfo } from './types';
 
 const srv = (id: string, over: Partial<ListedServer> = {}): ListedServer => ({
-  id, name: id, address: `https://${id}.example.org`, description: '', region: 'EU', game_version: '0.5.5e', tags: [], contact: '', mods: [], plain_http: false, ...over,
+  id, name: id, address: `https://${id}.example.org`, description: '', region: 'EU', game_version: '0.5.5e.hotfix1', tags: [], contact: '', mods: [], plain_http: false, ...over,
 });
-const info = (online: number, version = '0.5.5e'): ServerInfo => ({
+const info = (online: number, version = '0.5.5e.hotfix1'): ServerInfo => ({
   name: 'n', version, cluster_id: 'c', online, open_registration: true, login_host: 'h', login_port: 1, instance_port: null, gateway_region: null, uptime_secs: 1,
 });
-const up = (id: string, online: number, ping: number, version = '0.5.5e'): [string, ProbeResult] => [id, { id, ok: true, ping_ms: ping, info: info(online, version), error: null }];
+const up = (id: string, online: number, ping: number, version = '0.5.5e.hotfix1'): [string, ProbeResult] => [id, { id, ok: true, ping_ms: ping, info: info(online, version), error: null }];
 const down = (id: string): [string, ProbeResult] => [id, { id, ok: false, ping_ms: null, info: null, error: 'x' }];
 
 const list = [srv('alpha', { tags: ['pve'], region: 'EU' }), srv('bravo', { tags: ['pvp', 'hardcore'], region: 'NA', description: 'Fast leveling' }), srv('charlie', { game_version: '0.6.0' }), srv('delta')];
@@ -16,8 +16,8 @@ const probes = Object.fromEntries([up('alpha', 3, 80), up('bravo', 12, 30), down
 
 describe('filter', () => {
   it('filters by the live client version, falling back to the listed one', () => {
-    const f = defaultFilter('0.5.5e');
-    // delta says 0.5.5e in the list but runs 0.6.0 (it told us); charlie did not answer and is listed as 0.6.0.
+    const f = defaultFilter('0.5.5e.hotfix1');
+    // delta says 0.5.5e.hotfix1 in the list but runs 0.6.0 (it told us); charlie did not answer and is listed as 0.6.0.
     expect(filterServers(list, probes, f).map((s) => s.id)).toEqual(['alpha', 'bravo']);
     expect(filterServers(list, probes, defaultFilter('0.6.0')).map((s) => s.id)).toEqual(['charlie', 'delta']);
     expect(filterServers(list, probes, defaultFilter(null))).toHaveLength(4);

@@ -94,15 +94,23 @@ impl Settings {
     }
 
     /// Moves an old single `install_dir` into `install_dirs` (it belongs to the oldest supported
-    /// version, the only one that existed when it was written) and drops empty entries.
+    /// version, the only one that existed when it was written) and drops empty entries and the
+    /// entries of versions that are no longer supported (0.5.5e since launcher 0.6.0); an
+    /// unsupported selected version falls back to the newest.
     pub fn normalized(mut self) -> Self {
         if let Some(dir) = self.install_dir.take()
             && let Some(oldest) = crate::version::VersionFile::known_versions().first()
         {
             self.install_dirs.entry((*oldest).to_owned()).or_insert(dir);
         }
-        self.install_dirs.retain(|_, d| !d.as_os_str().is_empty());
-        if self.game_version.as_deref().is_some_and(str::is_empty) {
+        self.install_dirs.retain(|v, d| {
+            !d.as_os_str().is_empty() && crate::version::VersionFile::is_selectable(v)
+        });
+        if self
+            .game_version
+            .as_deref()
+            .is_some_and(|v| v.is_empty() || !crate::version::VersionFile::is_selectable(v))
+        {
             self.game_version = None;
         }
         self
@@ -217,8 +225,8 @@ mod tests {
         let dirs = Dirs::under(Path::new("/r"));
         let s = Settings::default();
         assert_eq!(
-            s.install_dir_or_default(&dirs, "0.5.5e"),
-            Path::new("/r/data/game/0.5.5e")
+            s.install_dir_or_default(&dirs, "0.5.5e.hotfix1"),
+            Path::new("/r/data/game/0.5.5e.hotfix1")
         );
         assert_eq!(s.dll_dir_or_default(&dirs), Path::new("/r/data/hook-dlls"));
     }
@@ -251,11 +259,11 @@ mod tests {
     fn install_dirs_are_per_version() {
         let dirs = Dirs::under(Path::new("/r"));
         let s = Settings {
-            install_dirs: BTreeMap::from([("0.5.5e".to_owned(), PathBuf::from("/games/a"))]),
+            install_dirs: BTreeMap::from([("0.5.5e.hotfix1".to_owned(), PathBuf::from("/games/a"))]),
             ..Settings::default()
         };
         assert_eq!(
-            s.install_dir_or_default(&dirs, "0.5.5e"),
+            s.install_dir_or_default(&dirs, "0.5.5e.hotfix1"),
             Path::new("/games/a")
         );
         // Another version does not inherit it.
@@ -279,6 +287,16 @@ mod tests {
         assert!(s.validate().is_ok());
         s.game_version = Some(String::new());
         assert_eq!(s.normalized().game_version, None, "empty means newest");
+        let mut old = Settings {
+            game_version: Some("0.5.5e".into()),
+            ..Default::default()
+        };
+        old.install_dirs.insert("0.5.5e".into(), PathBuf::from("/g"));
+        old.install_dirs.insert(known.to_owned(), PathBuf::from("/h"));
+        let n = old.normalized();
+        assert_eq!(n.game_version, None, "a dropped version falls back to the newest");
+        assert_eq!(n.install_dirs.keys().collect::<Vec<_>>(), [known]);
+        n.validate().unwrap();
         let s = Settings {
             install_dirs: BTreeMap::from([("9.9.9".to_owned(), PathBuf::from("/x"))]),
             ..Settings::default()

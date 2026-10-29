@@ -129,7 +129,7 @@ mod tests {
         std::fs::create_dir_all(shallow.parent().unwrap()).unwrap();
         std::fs::write(&shallow, b"x").unwrap();
         // The game install and a pretend Steam folder are not looked at.
-        let game = dirs.default_install_dir("0.5.5e").join(ACCOUNT_FILE);
+        let game = dirs.default_install_dir("0.5.5e.hotfix1").join(ACCOUNT_FILE);
         std::fs::create_dir_all(game.parent().unwrap()).unwrap();
         std::fs::write(&game, b"x").unwrap();
 

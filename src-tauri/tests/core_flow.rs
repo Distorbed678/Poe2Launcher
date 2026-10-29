@@ -52,7 +52,7 @@ async fn spawn_mock() -> (String, Arc<Mock>) {
         .route(
             "/api/v1/server",
             get(|| async {
-                Json(json!({"name": "Mock Realm", "version": "0.5.5e", "cluster_id": "c", "online": 3,
+                Json(json!({"name": "Mock Realm", "version": "0.5.5e.hotfix1", "cluster_id": "c", "online": 3,
                     "open_registration": true, "login_host": "127.0.0.1", "login_port": 29481,
                     "instance_port": 29112, "gateway_region": "Local", "uptime_secs": 5}))
             }),

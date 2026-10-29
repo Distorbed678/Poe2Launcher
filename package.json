@@ -4,7 +4,7 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "Launcher for the PoE2 0.5.5e private server",
+  "description": "Launcher for the PoE2 0.5.5e Hotfix 1 private server",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

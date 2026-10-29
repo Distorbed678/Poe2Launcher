@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::{verify, version::VersionFile};
 
 /// `min_bytes` is a floor ("at least this much is on disk after a good install"); the full
-/// 0.5.5e install measured 150.8 GB against a floor of 130 GB. The estimate adds this margin.
+/// 0.5.5e.hotfix1 install measured 150.8 GB against a floor of 130 GB. The estimate adds this margin.
 pub const ESTIMATE_PERCENT: u64 = 116;
 
 /// The install size the check plans for (0 = the version file gives none).

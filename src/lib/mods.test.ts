@@ -27,7 +27,7 @@ function plan(o: Partial<SyncPlan> = {}): SyncPlan {
 }
 
 function version(v: string, o: Partial<IndexVersion> = {}): IndexVersion {
-  return { version: v, released: '', game_versions: ['0.5.5e'], hook_api: 1, server_api: null, sha256: 'b'.repeat(64), size: 1, url: 'https://x', yanked: false, compat: { kind: 'ok' }, cached: false, ...o };
+  return { version: v, released: '', game_versions: ['0.5.5e.hotfix1'], hook_api: 1, server_api: null, sha256: 'b'.repeat(64), size: 1, url: 'https://x', yanked: false, compat: { kind: 'ok' }, cached: false, ...o };
 }
 
 function imod(id: string, o: Partial<IndexMod> = {}): IndexMod {

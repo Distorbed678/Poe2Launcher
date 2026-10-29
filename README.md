@@ -1,6 +1,6 @@
 # Poe2Launcher
 
-Desktop launcher for the Path of Exile 2 private server (Poe2ModdingProject; supports every client build that has a `versions/<version>.toml` in Poe2Protocol, today 0.5.5e, plus an *Official (read-only)* mode): one small program per player that does what `cargo xtask deploy-client` and `run-client` do for the developer.
+Desktop launcher for the Path of Exile 2 private server (Poe2ModdingProject; supports every client build that has a `versions/<version>.toml` in Poe2Protocol, today 0.5.5e.hotfix1, plus an *Official (read-only)* mode): one small program per player that does what `cargo xtask deploy-client` and `run-client` do for the developer.
 
 Tauri 2 (Rust backend in `src-tauri/`) with a Svelte 5 + Vite + TypeScript UI (`src/`). Game-styled dark theme by default (light parchment in Settings) from the design tokens in `src/tokens.css` and `src/lib/motion.ts` (identical copies in the web admin), a custom window frame, fades and slides that follow `prefers-reduced-motion`. A development preview without the backend: `npm run dev`, then open `http://localhost:1420/?mock` in a browser (`&versions` adds a second game version, `&official` the official mode, `&empty`, `&fresh`, `&mods` (a mod cache), `&modsync[=off|auto]` (the server requires two mods), `&theme=light`, `&installing`, `&paused`, `&lowspace`, `&offline`, `&nonews`, `&motd`, `&nolist`, `&nobackups`, `&nologs`; the mock lives in `src/lib/mock.ts` and is not in release builds).
 
@@ -104,7 +104,7 @@ client-hook/         submodule: Poe2ClientHook (poe-hook-deploy used as a path d
 
 The dropdown lists every embedded `versions/<version>.toml` (`build.rs` embeds all of them, so adding a build is adding a file; see `docs/guides/new-game-version.md` in Poe2ModdingProject) plus *Official (read-only)*, which reuses the newest file's depots without manifests, with its own folder `game/official` and the hook in read-only mode. The selection is `Settings.game_version`; install folders are per version (`Settings.install_dirs`; the old single `install_dir` is moved to the oldest version when read).
 
-The version file (`versions/<version>.toml`, a byte-identical copy of Poe2Protocol's file, which is the single definition of a supported build): for 0.5.5e app 2694490; depot 2694491 manifest 7366357142270402355 (content), depot 2694492 manifest 246779027001700092 (Windows exe). Both go into one directory in file order (exe over content), in **one** DepotDownloader run so Steam Guard is asked once.
+The version file (`versions/<version>.toml`, a byte-identical copy of Poe2Protocol's file, which is the single definition of a supported build): for 0.5.5e.hotfix1 app 2694490; depot 2694491 manifest 4712263798014036045 (content), depot 2694492 manifest 4973272861086296374 (Windows exe). Both go into one directory in file order (exe over content), in **one** DepotDownloader run so Steam Guard is asked once.
 
 - DepotDownloader **3.4.0**, the self-contained release (no .NET install), pinned with SHA-256 in `versions/depotdownloader.toml`; downloaded over HTTPS to `<data>/tools/`, refused and deleted on a mismatch.
 - Arguments: `-app 2694490 -depot A -manifest MA -depot B -manifest MB -username U [-remember-password] [-no-mobile] -dir DIR [-validate]`. `-remember-password` only if the box is ticked; there is never a `-password`.

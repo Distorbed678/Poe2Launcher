@@ -32,7 +32,7 @@ export function installMock(params: URLSearchParams): void {
     mod_sync: params.get('modsync') === 'off' || params.get('modsync') === 'auto' ? (params.get('modsync') as 'off' | 'auto') : 'ask',
   };
   let remembered = true;
-  const installed = new Set<string>(params.has('fresh') ? [] : (params.get('installed') ?? '0.5.5e').split(','));
+  const installed = new Set<string>(params.has('fresh') ? [] : (params.get('installed') ?? '0.5.5e.hotfix1').split(','));
   const profiles: ProfileView[] = empty
     ? []
     : [
@@ -42,7 +42,7 @@ export function installMock(params: URLSearchParams): void {
       ];
   const serverInfo = (id: string): ServerInfo => ({
     name: id === 'p1' ? 'Local Realm' : id === 'p2' ? 'LAN Realm' : 'Next Realm',
-    version: id === 'p3' ? (two ? '0.6.0' : '0.7.0') : '0.5.5e',
+    version: id === 'p3' ? (two ? '0.6.0' : '0.7.0') : '0.5.5e.hotfix1',
     cluster_id: 'c', online: id === 'p1' ? 3 : 12, open_registration: id !== 'p3', login_host: '127.0.0.1', login_port: 20481,
     instance_port: 6112, gateway_region: 'Local',
     uptime_secs: id === 'p1' ? 7300 : 190000,
@@ -53,8 +53,8 @@ export function installMock(params: URLSearchParams): void {
   });
   const pingOf = (id: string) => (id === 'p1' ? 4 : id === 'p2' ? 12 : 88);
   const versions = (): GameVersion[] => {
-    const cur = settings.game_version ?? (two ? '0.6.0' : '0.5.5e');
-    const priv = two ? ['0.6.0', '0.5.5e'] : ['0.5.5e'];
+    const cur = settings.game_version ?? (two ? '0.6.0' : '0.5.5e.hotfix1');
+    const priv = two ? ['0.6.0', '0.5.5e.hotfix1'] : ['0.5.5e.hotfix1'];
     return [
       { version: 'official', app_id: 2694490, official: true, selected: cur === 'official', newest: false, installed: installed.has('official') },
       ...priv.map((v, i) => ({ version: v, app_id: 2694490, official: false, selected: cur === v, newest: i === 0, installed: installed.has(v) })),
@@ -65,33 +65,33 @@ export function installMock(params: URLSearchParams): void {
     version: current().version, app_id: 2694490, install_dir: `/home/user/.local/share/poe2-launcher/game/${current().version}`,
     installed: current().installed, running: false, tool_version: '3.4.0', tool_ready: true,
     depots: [
-      { id: 2694491, manifest: current().official ? '' : '7366357142270402355', role: 'content', est_bytes: 150_000_000_000 },
-      { id: 2694492, manifest: current().official ? '' : '246779027001700092', role: 'exe (Windows)', est_bytes: 78_000_000 },
+      { id: 2694491, manifest: current().official ? '' : '4712263798014036045', role: 'content', est_bytes: 150_000_000_000 },
+      { id: 2694492, manifest: current().official ? '' : '4973272861086296374', role: 'exe (Windows)', est_bytes: 78_000_000 },
     ],
     required_bytes: 150_078_000_000,
     paused: params.has('paused') ? { version: current().version, steam_username: 'steam_user', remember_login: true } : null,
   });
   // The client hook: `?nohook` starts without one, `?hookupdate` pretends a newer release exists.
   const hookDir = '/home/user/.local/share/poe2-launcher/hook/packages';
-  const hookPkg = (version: string) => ({ dir: `${hookDir}/${version}`, name: `poe-hook-v${version}-game-0.5.5e-windows-x86_64`, version, game_versions: ['0.5.5e'], mod_abi: 1, commit: 'abc1234' });
+  const hookPkg = (version: string) => ({ dir: `${hookDir}/${version}`, name: `poe-hook-v${version}-game-0.5.5e.hotfix1-windows-x86_64`, version, game_versions: ['0.5.5e.hotfix1'], mod_abi: 1, commit: 'abc1234' });
   // The hosted server: installed version (null: none) and whether it runs.
   let hostVersion: string | null = params.has('hostpkg') || params.has('serverupdate') ? '0.2.0' : null;
   let hostRunning = params.has('serverrunning');
-  const hostPkg = (v: string) => ({ dir: `/home/user/.local/share/poe2-launcher/server/packages/poe-server-v${v}-game-0.5.5e-linux-x86_64`, name: `poe-server-v${v}-game-0.5.5e-linux-x86_64`, server_version: v, game_version: '0.5.5e', platform: 'linux', commit: 'abc1234' });
+  const hostPkg = (v: string) => ({ dir: `/home/user/.local/share/poe2-launcher/server/packages/poe-server-v${v}-game-0.5.5e.hotfix1-linux-x86_64`, name: `poe-server-v${v}-game-0.5.5e.hotfix1-linux-x86_64`, server_version: v, game_version: '0.5.5e.hotfix1', platform: 'linux', commit: 'abc1234' });
   const hostRelease = () => ({
-    repo: 'Distorbed678/Poe2Server', tag: 'server-v0.3.0', version: '0.3.0', game_version: '0.5.5e', prerelease: false,
-    asset_name: 'poe-server-v0.3.0-game-0.5.5e-linux-x86_64.tar.gz', asset_url: 'https://example.invalid/a', size: 41_000_000, sha256_url: 'https://example.invalid/a.sha256',
+    repo: 'Distorbed678/Poe2Server', tag: 'server-v0.3.0', version: '0.3.0', game_version: '0.5.5e.hotfix1', prerelease: false,
+    asset_name: 'poe-server-v0.3.0-game-0.5.5e.hotfix1-linux-x86_64.tar.gz', asset_url: 'https://example.invalid/a', size: 41_000_000, sha256_url: 'https://example.invalid/a.sha256',
     notes: '## Server 0.3.0\n\n- Terrain for more areas\n- **New:** `[web] cors` setting\n- Fixes a crash when a player leaves during a transfer',
     html_url: 'https://github.com/Distorbed678/Poe2Server/releases/tag/server-v0.3.0',
   });
   let hookVersion: string | null = params.has('nohook') ? null : params.has('hookupdate') ? '0.1.0' : '0.2.0';
   const hookStatus = () => ({
-    game_version: current().official ? '0.5.5e' : current().version, repo: 'Distorbed678/Poe2ClientHook',
+    game_version: current().official ? '0.5.5e.hotfix1' : current().version, repo: 'Distorbed678/Poe2ClientHook',
     source: settings.dll_dir ? { kind: 'manual' } : hookVersion ? { kind: 'downloaded', version: hookVersion } : { kind: 'missing' },
     dll_dir: settings.dll_dir ?? (hookVersion ? `${hookDir}/${hookVersion}` : '/home/user/.local/share/poe2-launcher/hook-dlls'),
     manual_dir: settings.dll_dir, installed: hookVersion ? hookPkg(hookVersion) : null, other_installed: [], busy: false,
   });
-  const hookRelease = () => ({ tag: 'hook-v0.2.0', version: '0.2.0', game_versions: ['0.5.5e'], prerelease: false, asset_name: 'poe-hook-v0.2.0-game-0.5.5e-windows-x86_64.zip', asset_url: 'https://example.invalid/a.zip', size: 5400000, sha256_url: 'https://example.invalid/a.sha256' });
+  const hookRelease = () => ({ tag: 'hook-v0.2.0', version: '0.2.0', game_versions: ['0.5.5e.hotfix1'], prerelease: false, asset_name: 'poe-hook-v0.2.0-game-0.5.5e.hotfix1-windows-x86_64.zip', asset_url: 'https://example.invalid/a.zip', size: 5400000, sha256_url: 'https://example.invalid/a.sha256' });
   // --- news, server list, logs, backups ---
   const now = Math.floor(Date.now() / 1000);
   const news: NewsItem[] = params.has('nonews') || params.has('offline') ? [] : [
@@ -101,11 +101,11 @@ export function installMock(params: URLSearchParams): void {
     { id: 'hook-hook-v0.2.0', source: 'hook', version: '0.2.0', date: '2026-10-19T10:00:00Z', title: 'Client hook 0.2.0', body: '', link: null },
   ];
   const listed: ListedServer[] = params.has('nolist') || params.has('offline') ? [] : [
-    { id: 'aurora-pve', name: 'Aurora PvE', address: 'https://aurora.example.org', description: 'Relaxed co-op realm with weekly events. Beginners welcome.', region: 'EU', game_version: '0.5.5e', tags: ['pve', 'friendly'], contact: 'https://discord.gg/example', mods: [], plain_http: false },
-    { id: 'ironforge', name: 'Ironforge Hardcore', address: 'https://ironforge.example.org', description: 'One life. Wipes each season.', region: 'NA', game_version: '0.5.5e', tags: ['hardcore', 'seasonal'], contact: 'ironforge@example.org', mods: [{ id: 'core-lib', version: '^1.2' }], plain_http: false },
-    { id: 'night-owl', name: 'Night Owl', address: 'http://203.0.113.9:8080', description: 'Small friends realm, plain http.', region: 'Asia', game_version: '0.5.5e', tags: ['pvp'], contact: '', mods: [], plain_http: true },
+    { id: 'aurora-pve', name: 'Aurora PvE', address: 'https://aurora.example.org', description: 'Relaxed co-op realm with weekly events. Beginners welcome.', region: 'EU', game_version: '0.5.5e.hotfix1', tags: ['pve', 'friendly'], contact: 'https://discord.gg/example', mods: [], plain_http: false },
+    { id: 'ironforge', name: 'Ironforge Hardcore', address: 'https://ironforge.example.org', description: 'One life. Wipes each season.', region: 'NA', game_version: '0.5.5e.hotfix1', tags: ['hardcore', 'seasonal'], contact: 'ironforge@example.org', mods: [{ id: 'core-lib', version: '^1.2' }], plain_http: false },
+    { id: 'night-owl', name: 'Night Owl', address: 'http://203.0.113.9:8080', description: 'Small friends realm, plain http.', region: 'Asia', game_version: '0.5.5e.hotfix1', tags: ['pvp'], contact: '', mods: [], plain_http: true },
     { id: 'old-build', name: 'Old Build Museum', address: 'https://old.example.org', description: 'Kept on an older client.', region: 'EU', game_version: '0.4.0', tags: [], contact: '', mods: [], plain_http: false },
-    { id: 'gone', name: 'Gone Fishing', address: 'https://gone.example.org', description: 'Not answering.', region: 'EU', game_version: '0.5.5e', tags: ['pve'], contact: '', mods: [], plain_http: false },
+    { id: 'gone', name: 'Gone Fishing', address: 'https://gone.example.org', description: 'Not answering.', region: 'EU', game_version: '0.5.5e.hotfix1', tags: ['pve'], contact: '', mods: [], plain_http: false },
   ];
   const probeOf = (s: ListedServer): ProbeResult => {
     if (s.id === 'gone') return { id: s.id, ok: false, ping_ms: null, info: null, error: 'cannot reach the server: timed out' };
@@ -155,7 +155,7 @@ export function installMock(params: URLSearchParams): void {
   let syncDone = params.get('modsync') === 'auto';
   const manifestOf = (id: string, version: string, side: 'client' | 'both', code: boolean): ModManifest => ({
     id, name: id.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' '), version, description: `The ${id} mod`, authors: ['Ann'], license: 'MIT', homepage: '', side,
-    game_versions: ['0.5.5e'], hook_api: code ? 1 : null, server_api: side === 'both' ? 1 : null, after: [], before: [], conflicts: [], dependencies: {}, entry_dll: code ? `${id}.dll` : null, has_code: code,
+    game_versions: ['0.5.5e.hotfix1'], hook_api: code ? 1 : null, server_api: side === 'both' ? 1 : null, after: [], before: [], conflicts: [], dependencies: {}, entry_dll: code ? `${id}.dll` : null, has_code: code,
   });
   function entry(id: string, version: string, o: Partial<ModEntry> = {}): ModEntry {
     const side = o.side === 'both' ? 'both' : 'client';
@@ -168,8 +168,8 @@ export function installMock(params: URLSearchParams): void {
     pins.p1 = [{ id: 'hud-tweaks', version: '1.2.0' }];
   }
   const advertised = () => [
-    { id: 'faster-rolls', version: '1.0.0', side: 'both', sha256: 'c'.repeat(64), size: 48_210, required: true, hook_api: 1, game_versions: ['0.5.5e'], sources: [{ type: 'server', path: '/api/v1/mods/faster-rolls/1.0.0.zip' }], name: 'Faster rolls', authors: ['Ann'], description: 'Rolls resolve 1.5x faster on this realm.' },
-    { id: 'realm-skin', version: '0.4.1', side: 'client', sha256: 'd'.repeat(64), size: 1_240_000, required: true, game_versions: ['0.5.5e'], name: 'Realm skin', authors: ['Bo'], description: 'Replaces the login background.' },
+    { id: 'faster-rolls', version: '1.0.0', side: 'both', sha256: 'c'.repeat(64), size: 48_210, required: true, hook_api: 1, game_versions: ['0.5.5e.hotfix1'], sources: [{ type: 'server', path: '/api/v1/mods/faster-rolls/1.0.0.zip' }], name: 'Faster rolls', authors: ['Ann'], description: 'Rolls resolve 1.5x faster on this realm.' },
+    { id: 'realm-skin', version: '0.4.1', side: 'client', sha256: 'd'.repeat(64), size: 1_240_000, required: true, game_versions: ['0.5.5e.hotfix1'], name: 'Realm skin', authors: ['Bo'], description: 'Replaces the login background.' },
   ];
   function syncPlan(profileId: string): SyncPlan {
     const p = profiles.find((x) => x.id === profileId);
@@ -196,7 +196,7 @@ export function installMock(params: URLSearchParams): void {
     return { entries, scope, scope_name: scope === 'all' ? 'All servers' : (profiles.find((p) => p.id === scope)?.name ?? ''), required: req, dropped: [], problems: [], cache_dir: '/home/user/.local/share/poe2-launcher/mods/cache', cache_bytes: cache.reduce((n, m) => n + m.size, 0), game_version: current().version, hook_abi: 1, mod_sync: settings.mod_sync };
   }
   function modIndex(): ModIndex {
-    const v = (version: string, o: object = {}) => ({ version, released: '2026-10-2' + version.length, game_versions: ['0.5.5e'], hook_api: 1, server_api: null, sha256: 'b'.repeat(64), size: 52_000, url: 'https://github.com/example/m/releases/download/x.zip', yanked: false, compat: { kind: 'ok' as const }, cached: false, ...o });
+    const v = (version: string, o: object = {}) => ({ version, released: '2026-10-2' + version.length, game_versions: ['0.5.5e.hotfix1'], hook_api: 1, server_api: null, sha256: 'b'.repeat(64), size: 52_000, url: 'https://github.com/example/m/releases/download/x.zip', yanked: false, compat: { kind: 'ok' as const }, cached: false, ...o });
     const m = (id: string, name: string, side: 'client' | 'both' | 'server', description: string, tags: string[], versions: ReturnType<typeof v>[]) => ({ id, name, description, author: 'Ann', side, homepage: 'https://example.org/' + id, licence: 'MIT', tags, versions });
     if (params.has('offline')) return { mods: [m('hud-tweaks', 'HUD tweaks', 'client', 'Moves and resizes parts of the HUD.', ['ui'], [v('1.2.0', { cached: true })])], skipped: [], updated: '', fetched_at: now - 86_400, offline: true, error: 'cannot reach the mod index: connection refused or host not found' };
     return { mods: [

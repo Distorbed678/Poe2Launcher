@@ -652,13 +652,13 @@ pub(crate) mod testutil {
 
     pub fn v1_manifest(id: &str, version: &str) -> String {
         format!(
-            "manifest_version = 1\nid = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\n[game]\nversions = [\"0.5.5e\"]\nhook_api = 1\n[entry]\ndll = \"{id}.dll\"\n"
+            "manifest_version = 1\nid = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\n[game]\nversions = [\"0.5.5e.hotfix1\"]\nhook_api = 1\n[entry]\ndll = \"{id}.dll\"\n"
         )
     }
 
     pub fn both_manifest(id: &str, version: &str) -> String {
         format!(
-            "manifest_version = 2\nid = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\nside = \"both\"\n[game]\nversions = [\"0.5.5e\"]\n[client]\ndll = \"client/{id}.dll\"\nhook_api = 1\n[server]\nserver_api = 1\n[server.library]\nlinux = \"server/lib{id}.so\"\nwindows = \"server/{id}.dll\"\n"
+            "manifest_version = 2\nid = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\nside = \"both\"\n[game]\nversions = [\"0.5.5e.hotfix1\"]\n[client]\ndll = \"client/{id}.dll\"\nhook_api = 1\n[server]\nserver_api = 1\n[server.library]\nlinux = \"server/lib{id}.so\"\nwindows = \"server/{id}.dll\"\n"
         )
     }
 
