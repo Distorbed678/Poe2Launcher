@@ -60,8 +60,14 @@ pub fn gateway_entry(info: &ServerInfo, host: &str) -> GatewayEntry {
 }
 
 /// The deploy for a server: gateway entry, `trusted_servers` (its login and instance
-/// addresses), standalone login, position reports to the instance port.
-pub fn deploy_options(cfg: &PlayConfig, info: &ServerInfo, host: &str) -> Result<DeployOptions> {
+/// addresses), standalone login, position reports to the instance port, and the server's
+/// register page for the login screen's "Create account" button.
+pub fn deploy_options(
+    cfg: &PlayConfig,
+    info: &ServerInfo,
+    host: &str,
+    profile_url: &str,
+) -> Result<DeployOptions> {
     let instance_port = info.instance_port.context(
         "the server does not report its instance port (GET /server `instance_port`): \
          it is older than this launcher; update the server",
@@ -78,7 +84,14 @@ pub fn deploy_options(cfg: &PlayConfig, info: &ServerInfo, host: &str) -> Result
             format!("{host}:{}", info.login_port),
             format!("{host}:{instance_port}"),
         ],
+        register_url: Some(register_url(profile_url)),
     })
+}
+
+/// The server's page for new accounts: its web admin's `#/register`, at the address the
+/// launcher reaches the server by (the one players use too).
+pub fn register_url(profile_url: &str) -> String {
+    format!("{}/#/register", profile_url.trim_end_matches('/'))
 }
 
 /// The deploy for the official servers, exactly what `cargo xtask deploy-client --official`
@@ -95,6 +108,7 @@ pub fn official_deploy_options(cfg: &PlayConfig) -> DeployOptions {
         dump_dir: None,
         login_mode: LoginMode::Steam,
         trusted_servers: Vec::new(),
+        register_url: None,
     }
 }
 
@@ -266,7 +280,7 @@ mod tests {
     #[test]
     fn deploy_options_trust_the_login_and_instance_addresses() {
         let tmp = tempfile::tempdir().unwrap();
-        let o = deploy_options(&cfg(tmp.path()), &info("play.example"), "play.example").unwrap();
+        let o = deploy_options(&cfg(tmp.path()), &info("play.example"), "play.example", "https://play.example").unwrap();
         assert_eq!(o.mode, Mode::Private);
         assert_eq!(o.login_mode, LoginMode::Standalone);
         assert_eq!(
@@ -274,6 +288,8 @@ mod tests {
             ["play.example:20481", "play.example:6112"]
         );
         assert_eq!(o.position_sync_port, Some(6112));
+        assert_eq!(o.register_url.as_deref(), Some("https://play.example/#/register"));
+        assert_eq!(register_url("http://10.0.0.2:8080/"), "http://10.0.0.2:8080/#/register");
         let g = o.gateway.unwrap();
         assert_eq!(
             g.line(),
@@ -282,7 +298,7 @@ mod tests {
         let mut old = info("h");
         old.instance_port = None;
         assert!(
-            deploy_options(&cfg(tmp.path()), &old, "h")
+            deploy_options(&cfg(tmp.path()), &old, "h", "https://play.example")
                 .unwrap_err()
                 .to_string()
                 .contains("instance port")
@@ -318,6 +334,7 @@ mod tests {
         assert!(
             o.trusted_servers.is_empty() && o.position_sync_port.is_none() && o.dump_dir.is_none()
         );
+        assert!(o.register_url.is_none(), "the official button is never redirected");
         let report = poe_hook_deploy::deploy(&o).unwrap();
         assert_eq!(report.login_mode, Some(LoginMode::Steam));
         assert!(report.trusted_servers.is_empty() && report.gateway.is_none());
@@ -333,7 +350,7 @@ mod tests {
         assert!(!c.prefix_dir.exists());
 
         // Private, then official again in the same folder.
-        poe_hook_deploy::deploy(&deploy_options(&c, &info("10.1.2.3"), "10.1.2.3").unwrap())
+        poe_hook_deploy::deploy(&deploy_options(&c, &info("10.1.2.3"), "10.1.2.3", "https://play.example").unwrap())
             .unwrap();
         assert_ne!(read("gateway_list.txt"), b"OFFICIAL-LIST");
         let t = toml();
@@ -379,7 +396,7 @@ mod tests {
         std::fs::write(c.dll_dir.join("poe_hook.dll"), b"loader").unwrap();
         std::fs::write(c.dll_dir.join("poe_hook_core.dll"), b"core").unwrap();
         let report = poe_hook_deploy::deploy(
-            &deploy_options(&c, &info("play.example"), "127.0.0.1").unwrap(),
+            &deploy_options(&c, &info("play.example"), "127.0.0.1", "https://play.example").unwrap(),
         )
         .unwrap();
         assert_eq!(report.login_mode, Some(LoginMode::Standalone));

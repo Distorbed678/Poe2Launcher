@@ -966,7 +966,7 @@ impl Core {
             );
         }
         let host = play::client_host(&info, &profile.url);
-        let options = play::deploy_options(&cfg, &info, &host)?;
+        let options = play::deploy_options(&cfg, &info, &host, &profile.url)?;
         self.check_hook(&settings).await?;
 
         // The server's required mods (downloaded and verified per the Mod sync setting) and the
