@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
+
+- Knows client 0.5.5e Hotfix 1 (`versions/0.5.5e.hotfix1.toml`); the nested client hook moved to hook-v0.4.0 (was hook-v0.2.0+3).
 
 - **New look and layout (UI rework, direction "Ash & Blood").** New app icon, the *rune seal* (`assets/icon.svg`, all sizes regenerated; the same mark is the web admin's logo). Dark red-black with gold accents, a crimson Play button, Cinzel headings over Inter (both bundled, SIL OFL); the light theme became a parchment variant. Design tokens in `src/tokens.css` and `src/lib/motion.ts` (identical copies in the web admin): one easing curve, 150-250 ms for hovers and panels, 350 ms page fades, skeletons while loading, nothing under *reduce motion*; the looping shine, drift and float animations are gone.
 - **Sidebar:** brand, the **game version picker** (moved from the title bar; a list joined to its box with *installed* / *not installed*), Play, Servers, **News** (new page, with a count of unseen items), Library, Settings; account and About at the foot. The custom frame is now a thin strip with the window buttons; the update badge moved to the sidebar.
