@@ -13,6 +13,6 @@ describe('router', () => {
     expect(pageFor('account')).toBe('servers');
     expect(pageFor('install')).toBe('library');
     expect(pageFor('mods')).toBe('library');
-    expect(pageFor('host')).toBe('host');
+    expect(pageFor('host')).toBe('servers');
   });
 });

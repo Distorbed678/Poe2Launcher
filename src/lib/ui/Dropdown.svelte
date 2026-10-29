@@ -38,7 +38,7 @@
     placement?: 'down' | 'up';
     align?: 'start' | 'end';
     disabled?: boolean;
-    variant?: 'field' | 'title';
+    variant?: 'field' | 'title' | 'attached' | 'plate';
     trigger?: Snippet<[DropItem | undefined]>;
     footer?: Snippet;
     minWidth?: number;
@@ -154,13 +154,14 @@
             onclick={() => choose(it)}
             onkeydown={null}
           >
-            {#if it.icon}<span class="dd-icon"><Icon name={it.icon} size={16} /></span>{/if}
+            {#if variant === 'attached'}<span class="dd-radio" class:official={it.icon === 'eye'}>{#if it.value === value}<Icon name="check" size={11} />{:else if it.icon === 'eye'}<Icon name="eye" size={10} />{/if}</span>
+            {:else if it.icon}<span class="dd-icon"><Icon name={it.icon} size={16} /></span>{/if}
             <span class="dd-text">
               <span class="dd-name">{it.label}</span>
               {#if it.sub}<span class="dd-sub">{it.sub}</span>{/if}
             </span>
             {#each it.badges ?? [] as b (b.text)}<Chip tone={b.tone ?? 'neutral'}>{b.text}</Chip>{/each}
-            {#if it.value === value}<Icon name="check" size={15} class="dd-check" />{/if}
+            {#if it.value === value && variant !== 'attached'}<Icon name="check" size={15} class="dd-check" />{/if}
           </li>
         {/each}
       </ul>

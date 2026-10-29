@@ -273,7 +273,7 @@ export function installMock(params: URLSearchParams): void {
         case 'hook_check': return { release: hookRelease(), update_available: hookVersion !== '0.2.0' };
         case 'hook_install_latest': hookVersion = '0.2.0'; return { hook: hookPkg('0.2.0'), sha256: 'f'.repeat(64), source: 'download' };
         case 'host_status': return {
-          settings: { server_name: 'My private realm', cluster_id: 'my-cluster', login_port: 20481, instance_port: 6112, web_port: 8080, public_host: '192.168.1.20', web_public: false, open_registration: true, admin_name: 'admin', autostart: false, package_dir: hostVersion ? hostPkg(hostVersion).dir : null, configured: hostVersion !== null, profile_id: null },
+          settings: { server_name: 'My private realm', cluster_id: 'my-cluster', login_port: 20481, instance_port: 6112, web_port: 8080, public_host: '192.168.1.20', web_public: false, open_registration: true, admin_name: 'admin', autostart: false, package_dir: hostVersion ? hostPkg(hostVersion).dir : null, configured: hostVersion !== null, profile_id: hostVersion ? 'p1' : null },
           package: hostVersion ? hostPkg(hostVersion) : null, package_problem: null, platform: 'linux', game_version: current().version, game_installed: current().installed,
           install_dir: status().install_dir, run: hostRunning ? { state: 'running', pid: 4242 } : { state: 'stopped' }, info: null, web_url: 'http://127.0.0.1:8080', lan_ip: '192.168.1.20',
           log_file: '/home/user/.local/share/poe2-launcher/server/server.log', busy: false, hosting_guide_url: 'https://example.invalid',

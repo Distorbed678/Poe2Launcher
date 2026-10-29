@@ -1,26 +1,26 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { app } from '../lib/app.svelte';
-  import { ipc } from '../lib/ipc';
-  import { run, toasts } from '../lib/notify.svelte';
-  import { listenHost, type HostProgress } from '../lib/events';
-  import { formatBytes, formatDateTime } from '../lib/format';
-  import { formatEta, formatSpeed } from '../lib/transfer';
-  import { RateTracker } from '../lib/rate.svelte';
-  import { ask } from '../lib/confirm.svelte';
+  import { app } from '../app.svelte';
+  import { ipc } from '../ipc';
+  import { run, toasts } from '../notify.svelte';
+  import { listenHost, type HostProgress } from '../events';
+  import { formatBytes, formatDateTime } from '../format';
+  import { formatEta, formatSpeed } from '../transfer';
+  import { RateTracker } from '../rate.svelte';
+  import { ask } from '../confirm.svelte';
   import {
     formFromSettings, isUp, logLevel, playerAddress, portsToForward, pushLog, runLabel, settingsFromForm,
     updateHeadline, updatePlan, validateHostForm, type HostForm,
-  } from '../lib/host';
-  import PageHead from '../lib/ui/PageHead.svelte';
-  import Icon from '../lib/ui/Icon.svelte';
-  import Chip from '../lib/ui/Chip.svelte';
-  import Empty from '../lib/ui/Empty.svelte';
-  import Spinner from '../lib/ui/Spinner.svelte';
-  import Progress from '../lib/ui/Progress.svelte';
-  import Markdown from '../lib/ui/Markdown.svelte';
-  import type { BackupStatus, HostStatus, InstallOutcome, RunState, UpdateOutcome } from '../lib/types';
+  } from '../host';
+  import Tabs from './Tabs.svelte';
+  import Icon from './Icon.svelte';
+  import Chip from './Chip.svelte';
+  import Empty from './Empty.svelte';
+  import Spinner from './Spinner.svelte';
+  import Progress from './Progress.svelte';
+  import Markdown from './Markdown.svelte';
+  import type { BackupStatus, HostStatus, InstallOutcome, RunState, UpdateOutcome } from '../types';
 
   let status = $state<HostStatus | null>(null);
   let form = $state<HostForm | null>(null);
@@ -53,6 +53,25 @@
   const upd = $derived(app.serverUpdate);
   const headline = $derived(updateHeadline(upd));
   const pct = $derived(progress && progress.total > 0 ? Math.min(100, Math.round((progress.done / progress.total) * 100)) : null);
+
+  // The panel shows one part at a time. Before the first setup the parts are steps (program, settings,
+  // start) and the panel follows the next one; afterwards they are tabs.
+  type View = 'program' | 'settings' | 'run' | 'log' | 'backups';
+  let view = $state<View | ''>('');
+  const next = $derived<View>(noPackage ? 'program' : !configured ? 'settings' : 'run');
+  const shown = $derived<View>(view || next);
+  const steps = $derived([
+    { id: 'program' as const, label: 'Program', done: !noPackage },
+    { id: 'settings' as const, label: 'Settings', done: configured },
+    { id: 'run' as const, label: 'Start', done: up },
+  ]);
+  const tabs = [
+    { id: 'run', label: 'Overview', icon: 'play' as const },
+    { id: 'program', label: 'Program', icon: 'box' as const },
+    { id: 'settings', label: 'Settings', icon: 'settings' as const },
+    { id: 'log', label: 'Log', icon: 'file' as const },
+    { id: 'backups', label: 'Backups', icon: 'database' as const },
+  ];
 
   async function refresh() {
     try {
@@ -175,6 +194,7 @@
     progress = null;
     dlRate.reset();
     await refresh();
+    if (!configured) view = '';
     app.forgetServerUpdate();
     void app.checkServerUpdate(true);
   }
@@ -242,6 +262,7 @@
     }
     task = '';
     await refresh();
+    if (!configured) view = '';
     app.forgetServerUpdate();
     void app.checkServerUpdate(true);
   }
@@ -306,6 +327,7 @@
     step = '';
     task = '';
     await refresh();
+    if (configured) view = 'run';
   }
 
   async function start() {
@@ -328,15 +350,29 @@
   }
 </script>
 
-<PageHead icon="host" title="Host a server" sub="Run a private PoE2 server on this computer and let friends join it." />
 
 {#if status && !status.platform.match(/^(linux|windows)$/)}
   <Empty icon="host" title="Not available here">Hosting from the launcher works on Linux and Windows only.</Empty>
 {:else if status && form}
+  {#if configured}
+    <Tabs {tabs} value={shown} label="Your server" onchange={(id) => (view = id as View)} />
+  {:else}
+    <p class="muted intro">Run a private PoE2 server on this computer and let friends join it.</p>
+    <ol class="stepper" aria-label="Create a server">
+      {#each steps as st, i (st.id)}
+        <li class:done={st.done} class:on={shown === st.id}>
+          <button type="button" onclick={() => (view = st.id)} aria-current={shown === st.id ? 'step' : undefined}>
+            <span class="n">{#if st.done}<Icon name="check" size={11} />{:else}{i + 1}{/if}</span> {st.label}
+          </button>
+        </li>
+      {/each}
+    </ol>
+  {/if}
   <div class="stack">
-    <!-- 1. The server program -->
+    {#if shown === 'program'}
+    <!-- The server program -->
     <section class="card">
-      <div class="card-head"><span class="head-icon"><Icon name="box" size={16} /></span><h2>1. Server program</h2>{#if status.package}<span class="grow"></span><Chip tone="ok" icon="check">installed</Chip>{/if}</div>
+      <div class="card-head"><span class="head-icon"><Icon name="box" size={16} /></span><h2>Server program</h2>{#if status.package}<span class="grow"></span><Chip tone="ok" icon="check">installed</Chip>{/if}</div>
       {#if status.package}
         <dl class="kv">
           <dt>Installed</dt><dd>{status.package.name}</dd>
@@ -417,23 +453,19 @@
           <p>The server reads its game data from <code>{status.install_dir}</code>: <a href="#/library">install it first</a>.</p>
         </div>
       {/if}
+      {#if !noPackage && !configured}
+        <div class="actions"><button type="button" class="btn primary" onclick={() => (view = 'settings')}>Next: settings</button></div>
+      {/if}
     </section>
+    {/if}
 
-    <!-- 2. Setup -->
+    {#if shown === 'settings'}
+    <!-- Setup -->
     <form class="card" onsubmit={setup}>
-      <div class="card-head"><span class="head-icon"><Icon name="settings" size={16} /></span><h2>2. {configured ? 'Settings' : 'Set up'}</h2></div>
+      <div class="card-head"><span class="head-icon"><Icon name="settings" size={16} /></span><h2>{configured ? 'Settings' : 'Set up'}</h2></div>
       <div class="two">
         <div>
           <label class="field"><span>Server name (shown to players)</span><input bind:value={form.server_name} maxlength="64" /></label>
-          <label class="field">
-            <span>Cluster id (login tokens belong to it; keep it when you re-install)</span>
-            <input bind:value={form.cluster_id} maxlength="32" />
-          </label>
-          <div class="row">
-            <label class="field grow"><span>Login port (TCP)</span><input type="number" min="1024" max="65535" bind:value={form.login_port} /></label>
-            <label class="field grow"><span>Game port (TCP + UDP)</span><input type="number" min="1024" max="65535" bind:value={form.instance_port} /></label>
-            <label class="field grow"><span>Web port (TCP)</span><input type="number" min="1024" max="65535" bind:value={form.web_port} /></label>
-          </div>
           <label class="field">
             <span>Public host: the address players use to reach this computer</span>
             <input bind:value={form.public_host} placeholder="192.168.1.20 or play.example.com" />
@@ -453,11 +485,6 @@
         <div>
           <label class="check"><input type="checkbox" bind:checked={form.open_registration} /> Anyone who knows the address can create an account</label>
           <p class="hint">Off: only admins create accounts (the Web admin or the server commands).</p>
-          <label class="check"><input type="checkbox" bind:checked={form.web_public} /> Let other computers log in through this server's web API</label>
-          <p class="hint">
-            Players need the web API to log in with the launcher. It uses plain http, so passwords travel unencrypted: fine on a trusted LAN,
-            otherwise put a TLS proxy in front (see the hosting guide). Off: only this computer can reach it.
-          </p>
           {#if configured}
             <p class="muted">Admin account: <b>{status.settings.admin_name || '(unknown)'}</b>. Leave the password empty to keep your accounts as they are.</p>
           {:else}
@@ -473,7 +500,28 @@
             <input type="password" bind:value={form.admin_password2} autocomplete="new-password" aria-invalid={form.admin_password2 !== '' && form.admin_password !== form.admin_password2} />
           </label>
           <p class="hint">The password is used once to create the account on your server and is not stored or written to any file.</p>
-
+        </div>
+      </div>
+      <details class="advanced">
+        <summary>Advanced: ports, cluster id, remote login</summary>
+        <div class="two">
+        <div>
+          <label class="field">
+            <span>Cluster id (login tokens belong to it; keep it when you re-install)</span>
+            <input bind:value={form.cluster_id} maxlength="32" />
+          </label>
+          <div class="row">
+            <label class="field grow"><span>Login port (TCP)</span><input type="number" min="1024" max="65535" bind:value={form.login_port} /></label>
+            <label class="field grow"><span>Game port (TCP + UDP)</span><input type="number" min="1024" max="65535" bind:value={form.instance_port} /></label>
+            <label class="field grow"><span>Web port (TCP)</span><input type="number" min="1024" max="65535" bind:value={form.web_port} /></label>
+          </div>
+          <label class="check"><input type="checkbox" bind:checked={form.web_public} /> Let other computers log in through this server's web API</label>
+          <p class="hint">
+            Players need the web API to log in with the launcher. It uses plain http, so passwords travel unencrypted: fine on a trusted LAN,
+            otherwise put a TLS proxy in front (see the hosting guide). Off: only this computer can reach it.
+          </p>
+        </div>
+        <div>
           <div class="notice info" style="margin-top: 8px">
             <span class="notice-title"><Icon name="globe" size={16} /> Port forwarding</span> <span class="hint">only for players outside your network</span>
             <ul style="margin: 4px 0 0; padding-left: 18px">
@@ -485,7 +533,8 @@
             </p>
           </div>
         </div>
-      </div>
+        </div>
+      </details>
       {#if errors.length > 0}
         <ul class="errs">{#each errors as m (m)}<li>{m}</li>{/each}</ul>
       {/if}
@@ -497,10 +546,12 @@
       </div>
       {#if up}<p class="hint">Stop the server to change its settings.</p>{/if}
     </form>
+    {/if}
 
-    <!-- 3. Run -->
+    {#if shown === 'run'}
+    <!-- Run -->
     <section class="card">
-      <div class="card-head"><span class="head-icon"><Icon name="play" size={16} /></span><h2>3. Run</h2></div>
+      <div class="card-head"><span class="head-icon"><Icon name="play" size={16} /></span><h2>{configured ? 'Run' : 'Start'}</h2></div>
       <div class="row">
         <Chip tone={ready ? 'ok' : up ? 'warn' : run_.state === 'exited' && run_.code !== 0 && run_.code !== null ? 'bad' : 'neutral'} dot>
           {runLabel(run_, ready)}
@@ -525,9 +576,12 @@
       {#if configured && ready}
         <p class="hint">Game address players' clients connect to: <code>{status.info?.login_host}:{status.info?.login_port}</code></p>
       {/if}
+      {#if !configured}<p class="hint">Set the server up first: <button type="button" class="link" onclick={() => (view = 'settings')}>Settings</button>.</p>{/if}
     </section>
+    {/if}
 
-    <!-- 4. Log -->
+    {#if shown === 'log' || (shown === 'run' && configured)}
+    <!-- Log -->
     <section class="card">
       <div class="card-head"><span class="head-icon"><Icon name="info" size={16} /></span><h2>Server log</h2></div>
       <div class="log" bind:this={logEl} role="log" aria-label="Server log">
@@ -538,8 +592,10 @@
       </div>
       <p class="hint">Also written to <code>{status.log_file}</code> (replaced at each start).</p>
     </section>
+    {/if}
 
-    <!-- 5. Backups -->
+    {#if shown === 'backups'}
+    <!-- Backups -->
     <section class="card">
       <div class="card-head"><span class="head-icon"><Icon name="database" size={16} /></span><h2>Backups</h2>
         <span class="grow"></span>
@@ -590,6 +646,7 @@
         {#if backups.server_running}<p class="hint">Restoring needs the server to be stopped.</p>{/if}
       {/if}
     </section>
+    {/if}
   </div>
 {:else}
   <div class="loading"><Spinner size={20} /> Loading...</div>
@@ -602,4 +659,16 @@
   .inline { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap; }
   .keep { width: 70px; }
   .notes { max-height: 220px; overflow: auto; margin: 6px 0; }
+  .intro { margin: 0 0 var(--sp-3); }
+  .stepper { list-style: none; margin: 0 0 var(--sp-4); padding: 0; display: flex; gap: var(--sp-2); }
+  .stepper li { flex: 1; border-top: 2px solid var(--line); transition: border-color var(--dur) var(--ease); }
+  .stepper li.done { border-color: var(--ok); }
+  .stepper li.on { border-color: var(--gold); }
+  .stepper button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 0 0; background: none; border: 0; cursor: pointer; color: var(--faint); font-size: var(--fs-sm); text-align: left; }
+  .stepper li.done button { color: var(--ok); }
+  .stepper li.on button { color: var(--gold-2); }
+  .stepper .n { width: 18px; height: 18px; border-radius: 50%; border: 1px solid currentColor; display: grid; place-items: center; font-size: 10.5px; }
+  .advanced { margin-top: var(--sp-2); border-top: 1px solid var(--line-soft); padding-top: var(--sp-3); }
+  .advanced summary { cursor: pointer; color: var(--gold); font-size: var(--fs-sm); margin-bottom: var(--sp-3); }
+  .log { height: 220px; }
 </style>

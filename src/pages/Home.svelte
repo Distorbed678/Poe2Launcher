@@ -1,22 +1,17 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { app } from '../lib/app.svelte';
-  import { ipc } from '../lib/ipc';
-  import { run } from '../lib/notify.svelte';
-  import { formatAgo, formatNewsDate, formatUptime } from '../lib/format';
-  import { serverCompat, versionLabel } from '../lib/gameversion';
+  import { formatNewsDate } from '../lib/format';
+  import { serverCompat } from '../lib/gameversion';
   import { isPlainHttpBlocked } from '../lib/url';
-  import { plainText } from '../lib/markdown';
   import { updateHeadline } from '../lib/host';
-  import PageHead from '../lib/ui/PageHead.svelte';
+  import { router } from '../lib/router.svelte';
   import Icon from '../lib/ui/Icon.svelte';
-  import Chip from '../lib/ui/Chip.svelte';
-  import Empty from '../lib/ui/Empty.svelte';
   import Spinner from '../lib/ui/Spinner.svelte';
-  import Markdown from '../lib/ui/Markdown.svelte';
+  import Dropdown, { type DropItem } from '../lib/ui/Dropdown.svelte';
   import SetupChecklist from '../lib/ui/SetupChecklist.svelte';
-  import type { NewsItem } from '../lib/types';
 
+  // The Play page: the server, the Play button and the state around it. Everything else is one level down.
   const sel = $derived(app.selected);
   const info = $derived(sel ? app.infos[sel.id] : undefined);
   const ok = $derived(typeof info === 'object' ? info : null);
@@ -25,30 +20,33 @@
   const blocker = $derived(app.playBlocker);
   const busy = $derived(app.play.state === 'preparing');
   const running = $derived(app.play.state === 'running');
-  const motd = $derived(ok?.motd?.trim() || null);
   const updateText = $derived(app.official ? null : updateHeadline(app.serverUpdate));
-  let checking = $state(false);
+  const latest = $derived(app.news?.items[0]);
   let timer: ReturnType<typeof setInterval> | undefined;
-  let open = $state<Record<string, boolean>>({});
 
-  async function check() {
-    if (!sel || isPlainHttpBlocked(sel)) return;
-    checking = true;
-    await app.checkServer(sel.id);
-    checking = false;
+  function check() {
+    if (sel && !isPlainHttpBlocked(sel)) void app.checkServer(sel.id);
   }
 
-  // The status follows the selected server and is looked at again every 30 s while Home is open.
+  // The status follows the selected server and is looked at again every 30 s while this page is open.
   $effect(() => {
     void sel?.id;
-    void check();
+    check();
   });
   onMount(() => {
     // A newer server release for the server you host: quiet, not more than every 10 minutes.
     void app.checkServerUpdate();
-    timer = setInterval(() => void check(), 30_000);
+    timer = setInterval(check, 30_000);
   });
   onDestroy(() => timer && clearInterval(timer));
+
+  const stateText = $derived.by(() => {
+    const p = app.play;
+    if (p.state === 'preparing') return `Preparing: ${p.step}...`;
+    if (p.state === 'running') return 'Game running';
+    if (p.state === 'exited' && !blocker) return p.code === 0 || p.code === null ? 'Game closed. Ready again.' : `Game exited with code ${p.code}`;
+    return null;
+  });
 
   /** Where to fix whatever blocks Play. */
   const fixLink = $derived.by(() => {
@@ -58,185 +56,159 @@
     return null;
   });
 
-  const newsItems = $derived(app.news?.items ?? []);
-  const sourceTitle: Record<NewsItem['source'], string> = { launcher: 'Launcher', server: 'Server', hook: 'Client hook', project: 'Project' };
-  const sourceTone: Record<NewsItem['source'], 'accent' | 'info' | 'ok' | 'neutral'> = { launcher: 'accent', server: 'info', hook: 'ok', project: 'neutral' };
+  const MANAGE = '__manage__';
+  const serverItems = $derived<DropItem[]>([
+    ...app.profiles.map((p) => ({
+      value: p.id,
+      label: p.name,
+      sub: p.logged_in ? `signed in as ${p.account}` : 'not signed in',
+      badges: p.logged_in ? [] : [{ text: 'log in', tone: 'warn' as const }],
+    })),
+    { value: MANAGE, label: 'Manage servers...', icon: 'settings' as const },
+  ]);
 
-  function link(url: string) {
-    void run(() => ipc.openLink(url));
+  function pick(id: string) {
+    if (id === MANAGE) router.go('servers');
+    else void app.select(id);
   }
 </script>
 
-<PageHead icon="home" title="Home" sub={app.official ? 'Official servers, read-only' : 'Your server, setup and what is new'} />
+<div class="play-wrap">
+  <SetupChecklist />
 
-<SetupChecklist />
+  {#if updateText && app.serverUpdate?.release}
+    <a class="play-note" href="#/servers?host=1"><Icon name="download" size={14} /> {updateText} <span class="go">Open your server</span></a>
+  {/if}
 
-{#if updateText && app.serverUpdate?.release}
-  <div class="notice accent update-note" role="status">
-    <span class="notice-title"><Icon name="download" size={16} /> {updateText}</span>
-    <p class="hint">
-      You host version {app.serverUpdate.installed}. The update stops the server for a moment, backs up its database and keeps your settings.
-      <a href="#/host">Open Host</a> to read the release notes and update.
+  <div class="play-center">
+    {#if app.official}
+      <div class="server-plate official">
+        <span class="plate-icon"><Icon name="eye" size={18} /></span>
+        <span class="plate-text">
+          <b>Official servers</b>
+          <small>Steam login and the original realms. The hook only watches.</small>
+        </span>
+      </div>
+    {:else if !sel}
+      <div class="server-plate empty">
+        <span class="plate-text">
+          <b>No server yet</b>
+          <small>Pick one from the public list, add one by address, or create your own.</small>
+        </span>
+        <a class="btn sm" href="#/servers">Choose</a>
+      </div>
+    {:else}
+      <Dropdown items={serverItems} value={sel.id} label="Server" variant="plate" onselect={pick}>
+        {#snippet trigger()}
+          <span class="dot-state" class:on={!!ok} class:bad={typeof info === 'string'}></span>
+          <span class="plate-text">
+            <b>{ok?.name ?? sel.name}</b>
+            <small>
+              {#if ok}{ok.online} online{ping !== undefined ? ` · ${ping} ms` : ''} · {sel.logged_in ? sel.account : 'not signed in'}
+              {:else if typeof info === 'string'}unreachable
+              {:else}<Spinner size={10} /> checking{/if}
+            </small>
+          </span>
+          <span class="plate-change">Change</span>
+        {/snippet}
+      </Dropdown>
+    {/if}
+
+    <div class="ornament" aria-hidden="true"><span class="gem"></span></div>
+
+    <button
+      type="button"
+      class="play-btn"
+      class:ready={!blocker}
+      class:official={app.official}
+      disabled={blocker !== null}
+      title={blocker ?? (app.official ? 'Deploy the read-only hook and start the game' : 'Deploy the hook and start the game')}
+      onclick={() => void app.startPlay()}
+    >
+      {#if busy}<Spinner size={20} label="Starting" /> Starting{:else if running}Running{:else}Play{/if}
+    </button>
+
+    <p class="play-state" class:blocked={!!blocker && !busy && !running} aria-live="polite">
+      {#if stateText}
+        {stateText}
+      {:else if blocker && !running}
+        <Icon name="alert" size={13} /> {blocker.replace(/ \((Library|Servers)\)$/, '')}
+        {#if fixLink}<a href={fixLink.href}>{fixLink.label}</a>{/if}
+        {#if sel && !app.official && compat.kind === 'other'}<button type="button" class="link" onclick={() => app.switchVersion(compat.version)}>Switch to {compat.version}</button>{/if}
+      {:else}
+        <span class="ok-dot"></span> Ready to play
+      {/if}
     </p>
   </div>
-{/if}
 
-{#if app.official}
-  <section class="card hero official">
-    <div class="hero-main">
-      <span class="hero-badge"><Icon name="eye" size={22} /></span>
-      <div class="grow">
-        <h2>Official servers</h2>
-        <p>The game starts with its own Steam login and the original realm list. The hook only watches; the launcher sends nothing and never logs in for you.</p>
-      </div>
-      <button type="button" class="big-play official" class:ready={!blocker} disabled={blocker !== null} onclick={() => void app.startPlay()}>
-        {#if busy}<Spinner size={22} /> Starting{:else if running}<Icon name="check" size={22} /> Running{:else}<Icon name="play" size={22} filled /> Play{/if}
-      </button>
-    </div>
-    {#if blocker && !busy && !running}<p class="why"><Icon name="alert" size={14} /> {blocker}
-      {#if fixLink}<a href={fixLink.href}>{fixLink.label}</a>{/if}</p>{/if}
-  </section>
-{:else if !sel}
-  <section class="card">
-    <Empty icon="servers" title="No server selected">
-      Find one in the public list, add one by address, or run your own on this computer.
-      {#snippet action()}
-        <div class="row" style="justify-content: center">
-          <a class="btn primary" href="#/servers?tab=browse"><Icon name="compass" size={14} /> Browse servers</a>
-          <a class="btn" href="#/servers"><Icon name="plus" size={14} /> Add by address</a>
-          <a class="btn" href="#/host"><Icon name="host" size={14} /> Host a server</a>
-        </div>
-      {/snippet}
-    </Empty>
-  </section>
-{:else}
-  <section class="card hero" class:selected={!blocker}>
-    <div class="hero-main">
-      <span class="hero-badge"><Icon name="servers" size={22} /></span>
-      <div class="grow">
-        <div class="name">
-          <h2>{ok?.name ?? sel.name}</h2>
-          {#if ok}<Chip tone="ok" dot>online</Chip>
-          {:else if typeof info === 'string'}<Chip tone="bad" dot>unreachable</Chip>
-          {:else}<Chip><Spinner size={10} /> checking</Chip>{/if}
-          {#if compat.kind === 'ok'}<Chip tone="ok" icon="check">compatible</Chip>
-          {:else if compat.kind === 'other'}<Chip tone="bad" icon="alert">needs client {compat.version}</Chip>
-          {:else if compat.kind === 'unsupported'}<Chip tone="bad" icon="alert">incompatible: client {compat.version}</Chip>{/if}
-          {#if sel.logged_in}<Chip tone="info" icon="account">{sel.account}</Chip>{:else}<Chip>not logged in</Chip>{/if}
-        </div>
-        <p class="muted url"><code>{sel.url}</code> <span>{sel.name !== (ok?.name ?? sel.name) ? `(your name: ${sel.name})` : ''}</span></p>
-      </div>
-      <button type="button" class="big-play" class:ready={!blocker} disabled={blocker !== null} onclick={() => void app.startPlay()}>
-        {#if busy}<Spinner size={22} /> Starting{:else if running}<Icon name="check" size={22} /> Running{:else}<Icon name="play" size={22} filled /> Play{/if}
-      </button>
-    </div>
-    {#if ok}
-      <div class="stat-row four">
-        <div class="stat"><small>Players online</small><b>{ok.online}</b></div>
-        <div class="stat"><small>Ping</small><b>{ping !== undefined ? `${ping} ms` : '-'}</b></div>
-        <div class="stat"><small>Client version</small><b>{ok.version}</b></div>
-        <div class="stat"><small>Uptime</small><b>{formatUptime(ok.uptime_secs)}</b></div>
-      </div>
-    {:else if typeof info === 'string'}
-      <p class="err" style="margin: 12px 0 0">{info}</p>
-    {/if}
-    {#if blocker && !busy && !running}
-      <p class="why"><Icon name="alert" size={14} /> {blocker}
-        {#if fixLink}<a href={fixLink.href}>{fixLink.label}</a>{/if}
-        {#if compat.kind === 'other'}<button type="button" class="link" onclick={() => app.switchVersion(compat.version)}>Switch to {compat.version}</button>{/if}
-      </p>
-    {/if}
-    <div class="row foot">
-      <button type="button" class="btn sm" onclick={check} disabled={checking}>
-        {#if checking}<Spinner size={12} />{:else}<Icon name="refresh" size={13} />{/if} Check now
-      </button>
-      <a class="btn sm ghost" href="#/servers">Change server</a>
-      <span class="grow"></span>
-      <span class="hint">Playing {versionLabel(app.version)}</span>
-    </div>
-  </section>
-{/if}
-
-<section class="news" aria-labelledby="news-h">
-  <div class="card-head" style="margin-top: 22px">
-    <span class="head-icon"><Icon name="news" size={16} /></span>
-    <h2 id="news-h">News</h2>
-    <span class="grow"></span>
-    {#if app.news?.offline}<span class="hint">offline{app.news.fetched_at ? `, saved ${formatAgo(app.news.fetched_at)}` : ''}</span>
-    {:else if app.news?.fetched_at}<span class="hint">updated {formatAgo(app.news.fetched_at)}</span>{/if}
-    <button type="button" class="btn sm ghost" onclick={() => app.loadNews(true)} disabled={app.newsLoading} aria-label="Refresh the news">
-      {#if app.newsLoading}<Spinner size={12} />{:else}<Icon name="refresh" size={13} />{/if}
-    </button>
-  </div>
-  {#if !app.news && app.newsLoading}
-    <div class="loading-row"><Spinner size={16} /> Loading...</div>
-  {:else if newsItems.length === 0}
-    <div class="card"><p class="muted" style="margin: 0">{app.news?.offline ? 'No news yet, and GitHub could not be reached. This is not a problem: the news appear when you are online.' : 'No news yet.'}</p></div>
-  {:else}
-    <div class="news-list">
-      {#each newsItems as n (n.id)}
-        {@const long = n.body.length > 220 || n.body.includes('\n')}
-        <article class="card news-item">
-          <div class="n-head">
-            <Chip tone={sourceTone[n.source]}>{sourceTitle[n.source]}{n.version ? ` ${n.version}` : ''}</Chip>
-            <span class="hint">{formatNewsDate(n.date)}</span>
-          </div>
-          <h3>{n.title}</h3>
-          {#if n.body}
-            {#if long && !open[n.id]}
-              <p class="muted preview">{plainText(n.body).slice(0, 200)}{plainText(n.body).length > 200 ? '...' : ''}</p>
-            {:else}
-              <Markdown source={n.body} />
-            {/if}
-          {/if}
-          <div class="row">
-            {#if long}<button type="button" class="link" onclick={() => (open[n.id] = !open[n.id])}>{open[n.id] ? 'Show less' : 'Read more'}</button>{/if}
-            {#if n.link}<button type="button" class="link" onclick={() => link(n.link!)}>Open on GitHub <Icon name="external" size={12} /></button>{/if}
-          </div>
-        </article>
-      {/each}
-    </div>
+  {#if latest}
+    <a class="news-teaser" href="#/news">
+      <span class="tag">News</span>
+      <span class="t">{latest.title}</span>
+      <span class="d">{formatNewsDate(latest.date)}</span>
+      <Icon name="chevron" size={14} class="go" />
+    </a>
   {/if}
-
-  {#if sel && !app.official && motd}
-    <div class="card-head" style="margin-top: 22px">
-      <span class="head-icon"><Icon name="users" size={16} /></span>
-      <h2>Message from {ok?.name ?? sel.name}</h2>
-    </div>
-    <div class="card motd"><Markdown source={motd} /></div>
-  {/if}
-</section>
+</div>
 
 <style>
-  .update-note { margin-bottom: 14px; }
-  .hero { padding: 20px; }
-  .hero.official { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
-  .hero-main { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-  .hero-badge { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); flex: none; }
-  .official .hero-badge { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
-  .hero h2 { margin: 0; font-size: 20px; text-transform: none; letter-spacing: 0; color: var(--text); }
-  .hero p { margin: 4px 0 0; }
-  .name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .url { overflow-wrap: anywhere; }
-  .big-play {
-    position: relative; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
-    min-width: 168px; height: 56px; padding: 0 30px; border: 0; border-radius: 14px; cursor: pointer;
-    font: 700 18px/1 var(--font); letter-spacing: 0.02em; color: var(--accent-ink);
-    background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: var(--glow);
-    transition: transform 0.15s var(--ease), box-shadow 0.2s, filter 0.2s;
+  .play-wrap { position: relative; min-height: 100%; display: flex; flex-direction: column; gap: var(--sp-4); }
+  .play-wrap :global(.setup) { max-width: 720px; width: 100%; margin: 0 auto; }
+  .play-note { align-self: center; display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--gold-2); text-decoration: none; border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line)); background: var(--surface); padding: 6px 12px; border-radius: var(--radius); transition: border-color var(--dur) var(--ease); }
+  .play-note:hover { border-color: var(--gold); }
+  .play-note .go { color: var(--muted); }
+
+  .play-center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-4); padding: var(--sp-6) 0; }
+
+  .server-plate, .play-center :global(.dd.plate .dd-trigger) {
+    display: flex; align-items: center; gap: var(--sp-3); width: 340px; min-height: 58px; padding: 10px 14px;
+    background: color-mix(in srgb, var(--surface) 88%, transparent); border: 1px solid var(--line); border-radius: var(--radius); text-align: left;
   }
-  .big-play.official { background: linear-gradient(135deg, #ffb347, #ff6f4d); }
-  .big-play:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.06); }
-  .big-play:active:not(:disabled) { transform: translateY(1px) scale(0.98); }
-  .big-play:disabled { cursor: not-allowed; opacity: 0.45; box-shadow: none; filter: saturate(0.5); }
-  .stat-row { margin: 16px 0 0; }
-  .why { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 14px 0 0; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line)); background: color-mix(in srgb, var(--warn) 8%, var(--surface)); color: var(--text); }
-  .foot { margin-top: 14px; }
-  .news-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); align-items: start; }
-  .news-item { display: flex; flex-direction: column; gap: 8px; }
-  .n-head { display: flex; align-items: center; gap: 10px; }
-  .news-item h3 { font-size: 15px; }
-  .preview { margin: 0; font-size: 13px; }
-  .motd { border-left: 3px solid var(--accent); }
-  .loading-row { display: flex; align-items: center; gap: 10px; color: var(--muted); padding: 14px 0; }
+  .play-center :global(.dd.plate) { display: block; }
+  .play-center :global(.dd.plate .dd-trigger:hover:not(:disabled)) { border-color: color-mix(in srgb, var(--gold) 60%, var(--line)); }
+  .play-center :global(.dd.plate.open .dd-trigger) { border-color: var(--gold); box-shadow: none; }
+  .play-center :global(.dd.plate .dd-chevron) { color: var(--gold); }
+  .play-center :global(.dd.plate .dd-menu) { width: 340px; }
+  .server-plate.official { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+  .plate-icon { color: var(--warn); display: grid; }
+  .plate-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+  .plate-text b { font-size: var(--fs-md); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .plate-text small { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
+  .plate-change { font-size: var(--fs-xs); color: var(--gold); }
+  .dot-state { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; transition: background var(--dur) var(--ease); }
+  .dot-state.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot-state.bad { background: var(--danger); }
+
+  .ornament { display: flex; align-items: center; gap: 10px; width: 340px; color: var(--gold); }
+  .ornament::before, .ornament::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, var(--gold)); }
+  .ornament::after { background: linear-gradient(90deg, var(--gold), transparent); }
+  .gem { width: 6px; height: 6px; background: var(--gold); transform: rotate(45deg); }
+
+  .play-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 12px; width: 340px; height: 68px;
+    font: 700 24px/1 var(--font-head); letter-spacing: 0.24em; text-indent: 0.24em; color: var(--on-crimson);
+    background: var(--play-bg); border: 1px solid var(--gold); border-radius: var(--radius); cursor: pointer;
+    box-shadow: var(--glow), inset 0 1px 0 rgb(255 255 255 / 0.18);
+    transition: filter var(--dur) var(--ease), box-shadow var(--dur-slow) var(--ease), transform var(--dur-fast) var(--ease), opacity var(--dur) var(--ease);
+  }
+  .play-btn:hover:not(:disabled) { filter: brightness(1.12); box-shadow: 0 12px 44px rgb(209 161 78 / 0.32), inset 0 1px 0 rgb(255 255 255 / 0.22); }
+  .play-btn:active:not(:disabled) { transform: translateY(1px); }
+  .play-btn:disabled { cursor: not-allowed; opacity: 0.5; box-shadow: none; filter: saturate(0.4); }
+  .play-btn:disabled:has(:global(.spinner)) { opacity: 0.9; filter: none; }
+
+  .play-state { margin: 0; min-height: 22px; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px 10px; font-size: var(--fs-sm); color: var(--muted); text-align: center; max-width: 520px; }
+  .play-state.blocked { color: var(--warn); }
+  .play-state a, .play-state .link { color: var(--gold-2); }
+  .ok-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+
+  .news-teaser {
+    display: flex; align-items: center; gap: var(--sp-3); padding: 10px 14px; text-decoration: none; color: var(--muted); font-size: var(--fs-sm);
+    border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 82%, transparent); border-radius: var(--radius);
+    transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .news-teaser:hover { border-color: color-mix(in srgb, var(--gold) 55%, var(--line)); color: var(--text); }
+  .news-teaser .tag { color: var(--gold-2); font-weight: 600; }
+  .news-teaser .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .news-teaser .d { color: var(--faint); }
+  .news-teaser :global(.go) { transform: rotate(-90deg); color: var(--gold); }
 </style>

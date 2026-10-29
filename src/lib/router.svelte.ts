@@ -20,8 +20,8 @@ export function hrefFor(path: string, query?: Record<string, string | undefined>
   return `#/${path.replace(/^\/+/, '')}${qs ? `?${qs}` : ''}`;
 }
 
-/** Pages that were merged into others keep working as links (`#/account` is now Servers). */
-const LEGACY: Record<string, string> = { account: 'servers', install: 'library', mods: 'library' };
+/** Pages that were merged into others keep working as links (`#/account` and `#/host` are now Servers). */
+const LEGACY: Record<string, string> = { account: 'servers', install: 'library', mods: 'library', host: 'servers' };
 
 export function pageFor(segment: string | undefined): string {
   if (!segment) return 'home';

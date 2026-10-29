@@ -1,16 +1,14 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import Icon, { type IconName } from './Icon.svelte';
-  let { title, sub, icon, children }: { title: string; sub?: string; icon?: IconName; children?: Snippet } = $props();
+  import type { IconName } from './Icon.svelte';
+  // `icon` is accepted for the callers but not drawn: the headings stand on their own.
+  let { title, sub, children }: { title: string; sub?: string; icon?: IconName; children?: Snippet } = $props();
 </script>
 
 <div class="page-head">
   <div class="page-title">
-    {#if icon}<span class="page-icon"><Icon name={icon} size={20} /></span>{/if}
-    <div>
-      <h1>{title}</h1>
-      {#if sub}<p class="muted">{sub}</p>{/if}
-    </div>
+    <h1>{title}</h1>
+    {#if sub}<p class="muted">{sub}</p>{/if}
   </div>
   {#if children}<div class="toolbar">{@render children()}</div>{/if}
 </div>

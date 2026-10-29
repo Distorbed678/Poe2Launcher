@@ -42,7 +42,7 @@
                 {#if installingHook}<Spinner size={14} /> Downloading{:else}<Icon name="download" size={14} /> Download{/if}
               </button>
             {:else}
-              <a class="btn" class:primary={s.id === now} href="#/host"><Icon name="host" size={14} /> Host a server</a>
+              <a class="btn" class:primary={s.id === now} href="#/servers?host=1"><Icon name="host" size={14} /> Create a server</a>
               <span class="hint">or</span>
               <a class="btn" href="#/servers?tab=browse"><Icon name="compass" size={14} /> Find a server</a>
               <a class="btn" href="#/servers"><Icon name="plus" size={14} /> Add by address</a>
