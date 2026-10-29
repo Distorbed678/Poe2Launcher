@@ -15,6 +15,7 @@
   import ConfirmDialog from './lib/ui/ConfirmDialog.svelte';
   import ModSyncDialog from './lib/ui/ModSyncDialog.svelte';
   import VersionPicker from './lib/ui/VersionPicker.svelte';
+  import iconUrl from './assets/icon.png';
   import Home from './pages/Home.svelte';
   import Servers from './pages/Servers.svelte';
   import News from './pages/News.svelte';
@@ -91,8 +92,11 @@
   <div class="body">
     <nav class="side" aria-label="Main">
       <div class="side-brand" data-tauri-drag-region>
-        <span class="brand-name">Path of Exile II</span>
-        <small>{app.official ? 'official, read-only' : 'private launcher'}</small>
+        <img src={iconUrl} alt="" width="30" height="30" />
+        <span class="brand-text">
+          <span class="brand-name">Path of Exile II</span>
+          <small>{app.official ? 'official, read-only' : 'private launcher'}</small>
+        </span>
       </div>
       <VersionPicker />
       {#each visible as n (n.page)}
