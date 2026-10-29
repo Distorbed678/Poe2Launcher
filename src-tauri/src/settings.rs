@@ -267,7 +267,10 @@ mod tests {
     fn install_dirs_are_per_version() {
         let dirs = Dirs::under(Path::new("/r"));
         let s = Settings {
-            install_dirs: BTreeMap::from([("0.5.5e.hotfix1".to_owned(), PathBuf::from("/games/a"))]),
+            install_dirs: BTreeMap::from([(
+                "0.5.5e.hotfix1".to_owned(),
+                PathBuf::from("/games/a"),
+            )]),
             ..Settings::default()
         };
         assert_eq!(
@@ -299,10 +302,15 @@ mod tests {
             game_version: Some("0.5.5e".into()),
             ..Default::default()
         };
-        old.install_dirs.insert("0.5.5e".into(), PathBuf::from("/g"));
-        old.install_dirs.insert(known.to_owned(), PathBuf::from("/h"));
+        old.install_dirs
+            .insert("0.5.5e".into(), PathBuf::from("/g"));
+        old.install_dirs
+            .insert(known.to_owned(), PathBuf::from("/h"));
         let n = old.normalized().without_dropped_versions();
-        assert_eq!(n.game_version, None, "a dropped version falls back to the newest");
+        assert_eq!(
+            n.game_version, None,
+            "a dropped version falls back to the newest"
+        );
         assert_eq!(n.install_dirs.keys().collect::<Vec<_>>(), [known]);
         n.validate().unwrap();
         let s = Settings {

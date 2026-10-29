@@ -280,7 +280,13 @@ mod tests {
     #[test]
     fn deploy_options_trust_the_login_and_instance_addresses() {
         let tmp = tempfile::tempdir().unwrap();
-        let o = deploy_options(&cfg(tmp.path()), &info("play.example"), "play.example", "https://play.example").unwrap();
+        let o = deploy_options(
+            &cfg(tmp.path()),
+            &info("play.example"),
+            "play.example",
+            "https://play.example",
+        )
+        .unwrap();
         assert_eq!(o.mode, Mode::Private);
         assert_eq!(o.login_mode, LoginMode::Standalone);
         assert_eq!(
@@ -288,8 +294,14 @@ mod tests {
             ["play.example:20481", "play.example:6112"]
         );
         assert_eq!(o.position_sync_port, Some(6112));
-        assert_eq!(o.register_url.as_deref(), Some("https://play.example/#/register"));
-        assert_eq!(register_url("http://10.0.0.2:8080/"), "http://10.0.0.2:8080/#/register");
+        assert_eq!(
+            o.register_url.as_deref(),
+            Some("https://play.example/#/register")
+        );
+        assert_eq!(
+            register_url("http://10.0.0.2:8080/"),
+            "http://10.0.0.2:8080/#/register"
+        );
         let g = o.gateway.unwrap();
         assert_eq!(
             g.line(),
@@ -334,7 +346,10 @@ mod tests {
         assert!(
             o.trusted_servers.is_empty() && o.position_sync_port.is_none() && o.dump_dir.is_none()
         );
-        assert!(o.register_url.is_none(), "the official button is never redirected");
+        assert!(
+            o.register_url.is_none(),
+            "the official button is never redirected"
+        );
         let report = poe_hook_deploy::deploy(&o).unwrap();
         assert_eq!(report.login_mode, Some(LoginMode::Steam));
         assert!(report.trusted_servers.is_empty() && report.gateway.is_none());
@@ -350,8 +365,10 @@ mod tests {
         assert!(!c.prefix_dir.exists());
 
         // Private, then official again in the same folder.
-        poe_hook_deploy::deploy(&deploy_options(&c, &info("10.1.2.3"), "10.1.2.3", "https://play.example").unwrap())
-            .unwrap();
+        poe_hook_deploy::deploy(
+            &deploy_options(&c, &info("10.1.2.3"), "10.1.2.3", "https://play.example").unwrap(),
+        )
+        .unwrap();
         assert_ne!(read("gateway_list.txt"), b"OFFICIAL-LIST");
         let t = toml();
         assert!(
@@ -396,7 +413,13 @@ mod tests {
         std::fs::write(c.dll_dir.join("poe_hook.dll"), b"loader").unwrap();
         std::fs::write(c.dll_dir.join("poe_hook_core.dll"), b"core").unwrap();
         let report = poe_hook_deploy::deploy(
-            &deploy_options(&c, &info("play.example"), "127.0.0.1", "https://play.example").unwrap(),
+            &deploy_options(
+                &c,
+                &info("play.example"),
+                "127.0.0.1",
+                "https://play.example",
+            )
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(report.login_mode, Some(LoginMode::Standalone));

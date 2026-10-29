@@ -132,7 +132,10 @@ async fn official_has_no_mods_and_no_hosting() {
             .contains("private")
     );
     assert!(e.core.host_start("s1").await.is_err());
-    assert!(e.core.host_create("x").is_err(), "no hosting for the official version");
+    assert!(
+        e.core.host_create("x").is_err(),
+        "no hosting for the official version"
+    );
     e.core
         .set_game_version(VersionFile::known_versions()[0])
         .unwrap();

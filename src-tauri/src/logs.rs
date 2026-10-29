@@ -466,8 +466,12 @@ impl Core {
     fn host_status_blocking_info(&self) -> Option<String> {
         let mut out = Vec::new();
         for sid in self.host_ids() {
-            let Ok(s) = self.host_settings(&sid) else { continue };
-            let Some(dir) = s.package_dir.as_ref() else { continue };
+            let Ok(s) = self.host_settings(&sid) else {
+                continue;
+            };
+            let Some(dir) = s.package_dir.as_ref() else {
+                continue;
+            };
             if let Ok(p) =
                 crate::host::inspect_package(dir, &self.version().version, std::env::consts::OS)
             {

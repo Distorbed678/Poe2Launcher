@@ -96,7 +96,11 @@ fn package(version: &str, new_layout: bool, exe: &[u8], example: &str) -> Vec<u8
             example.as_bytes().to_vec(),
             0o644,
         ),
-        (version_file, b"version = \"0.5.5e.hotfix1\"\n".to_vec(), 0o644),
+        (
+            version_file,
+            b"version = \"0.5.5e.hotfix1\"\n".to_vec(),
+            0o644,
+        ),
         (
             "third_party/dat-schema/schema-poe2.min.json".into(),
             b"{}".to_vec(),
@@ -404,7 +408,10 @@ async fn a_running_server_is_updated_with_its_config_kept_and_started_again() {
             .unwrap()
             .ends_with("/Poe2Server/releases/tag/server-v0.2.0")
     );
-    assert!(e.core.runtime(&e.id).is_running(), "a check changes nothing");
+    assert!(
+        e.core.runtime(&e.id).is_running(),
+        "a check changes nothing"
+    );
     assert_eq!(mock.list_hits.load(Ordering::SeqCst), 1);
 
     let out = e
@@ -434,10 +441,7 @@ async fn a_running_server_is_updated_with_its_config_kept_and_started_again() {
     // The config: the user's value kept, the new release's keys with their defaults, the
     // wizard's answers in place.
     let new_cfg: toml_edit::DocumentMut =
-        std::fs::read_to_string(e.cfg())
-            .unwrap()
-            .parse()
-            .unwrap();
+        std::fs::read_to_string(e.cfg()).unwrap().parse().unwrap();
     assert_eq!(new_cfg["web"]["rate_limit"].as_integer(), Some(77));
     assert_eq!(new_cfg["web"]["cors"].as_str(), Some("none"));
     assert_eq!(
@@ -508,10 +512,7 @@ async fn a_new_server_that_does_not_come_up_is_rolled_back() {
         e.core.host_settings(&e.id).unwrap().package_dir.as_deref(),
         Some(old_pkg.as_path())
     );
-    assert_eq!(
-        std::fs::read_to_string(e.cfg()).unwrap(),
-        old_cfg
-    );
+    assert_eq!(std::fs::read_to_string(e.cfg()).unwrap(), old_cfg);
     assert!(e.core.runtime(&e.id).is_running());
     assert_eq!(started_after(&old_pkg, 2).await, ["0.1.0", "0.1.0"]);
     assert_eq!(e.rows(), 1);
@@ -544,7 +545,10 @@ async fn a_bad_download_changes_nothing_and_the_server_keeps_running() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("does not match its checksum"), "{err}");
-    assert!(e.core.runtime(&e.id).is_running(), "the old server was never stopped");
+    assert!(
+        e.core.runtime(&e.id).is_running(),
+        "the old server was never stopped"
+    );
     assert_eq!(started_after(&old_pkg, 1).await, ["0.1.0"]);
     assert_eq!(e.package_dirs(), [pkg_name("0.1.0")]);
     assert!(e.backups().is_empty());
@@ -625,8 +629,16 @@ async fn the_fallback_repository_and_both_layouts_work_for_a_stopped_server() {
     assert!(out.updated && !out.was_running && !out.restarted);
     assert_eq!(e.package_dirs(), [pkg_name("0.2.0")]);
     assert!(!old_pkg.exists());
-    assert!(!e.core.runtime(&e.id).is_running(), "a stopped server stays stopped");
-    assert!(out.package.dir.join("versions/0.5.5e.hotfix1.toml").is_file());
+    assert!(
+        !e.core.runtime(&e.id).is_running(),
+        "a stopped server stays stopped"
+    );
+    assert!(
+        out.package
+            .dir
+            .join("versions/0.5.5e.hotfix1.toml")
+            .is_file()
+    );
     let cfg = std::fs::read_to_string(e.cfg()).unwrap();
     assert!(cfg.contains("cors = \"none\""));
 
@@ -663,7 +675,10 @@ async fn nothing_is_asked_of_github_without_an_installed_server() {
     let _ = e
         .install_and_setup(&package("0.1.0", true, &running_exe("0.1.0"), OLD_EXAMPLE))
         .await;
-    let check = e.core.host_update_check_at(&e.id, "http://127.0.0.1:1").await;
+    let check = e
+        .core
+        .host_update_check_at(&e.id, "http://127.0.0.1:1")
+        .await;
     assert!(!check.update_available);
     assert_eq!(check.installed.as_deref(), Some("0.1.0"));
     assert!(

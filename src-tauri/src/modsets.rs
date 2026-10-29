@@ -555,7 +555,14 @@ mod tests {
         assert_eq!(s.members[0].version, "1.0.0");
         assert_eq!(s.dropped.len(), 1);
         // Another server pins the other version.
-        let s2 = effective(&e.cache, &[req("req-mod", "2.0.0")], &[], &[], "0.5.5e.hotfix1", 1);
+        let s2 = effective(
+            &e.cache,
+            &[req("req-mod", "2.0.0")],
+            &[],
+            &[],
+            "0.5.5e.hotfix1",
+            1,
+        );
         assert_eq!(s2.members[0].version, "2.0.0");
     }
 
@@ -588,7 +595,14 @@ mod tests {
             "1.0.0",
             "[dependencies]\nlib-mod = \"^1\"\n",
         );
-        let s = effective(&e.cache, &[], &[pin("user-mod", "1.0.0")], &[], "0.5.5e.hotfix1", 1);
+        let s = effective(
+            &e.cache,
+            &[],
+            &[pin("user-mod", "1.0.0")],
+            &[],
+            "0.5.5e.hotfix1",
+            1,
+        );
         assert_eq!(ids(&s), ["lib-mod", "user-mod"]);
         assert_eq!(
             s.members[0].version, "1.5.0",
@@ -702,7 +716,14 @@ mod tests {
         );
 
         // Switching to a server that needs only aa-mod removes bb-mod from the game folder.
-        let s2 = effective(&e.cache, &[req("aa-mod", "1.0.0")], &[], &[], "0.5.5e.hotfix1", 1);
+        let s2 = effective(
+            &e.cache,
+            &[req("aa-mod", "1.0.0")],
+            &[],
+            &[],
+            "0.5.5e.hotfix1",
+            1,
+        );
         let r = apply_to_game(&game, &s2, &e.cache).unwrap();
         assert_eq!(r.removed, ["bb-mod"]);
         assert!(!mods.join("bb-mod").exists() && mods.join("dev-mod/mod.toml").is_file());

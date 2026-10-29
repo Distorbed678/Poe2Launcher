@@ -417,7 +417,10 @@ mod fake {
         ar.unpack(folder.path()).unwrap();
         let out = e
             .core
-            .host_install_local(&e.id, folder.path().join(pkg_name("0.1.0")).to_str().unwrap())
+            .host_install_local(
+                &e.id,
+                folder.path().join(pkg_name("0.1.0")).to_str().unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(out.source, "folder");
@@ -495,7 +498,10 @@ mod fake {
         s.web_port = s.login_port;
         let err = e
             .core
-            .host_setup(&e.id, poe2_launcher_lib::host_ops::SetupRequest { settings: s })
+            .host_setup(
+                &e.id,
+                poe2_launcher_lib::host_ops::SetupRequest { settings: s },
+            )
             .await
             .unwrap_err()
             .to_string();
@@ -504,7 +510,10 @@ mod fake {
         let s = HostSettings::default();
         let err = e
             .core
-            .host_setup(&e.id, poe2_launcher_lib::host_ops::SetupRequest { settings: s })
+            .host_setup(
+                &e.id,
+                poe2_launcher_lib::host_ops::SetupRequest { settings: s },
+            )
             .await
             .unwrap_err()
             .to_string();
@@ -567,17 +576,32 @@ mod fake {
         };
         let res = e
             .core
-            .host_setup(&e.id, poe2_launcher_lib::host_ops::SetupRequest { settings: s })
+            .host_setup(
+                &e.id,
+                poe2_launcher_lib::host_ops::SetupRequest { settings: s },
+            )
             .await
             .unwrap();
-        assert!(!e.core.runtime(&e.id).is_running(), "the server was not started");
+        assert!(
+            !e.core.runtime(&e.id).is_running(),
+            "the server was not started"
+        );
         assert!(!pkg.join("calls.log").exists(), "no poe-server command ran");
         let folder = e.tmp.path().join("data/servers").join(&e.id);
         assert_eq!(res.config_file, folder.join("server.toml"));
         let cfg = std::fs::read_to_string(&res.config_file).unwrap();
-        assert!(cfg.contains(&folder.join("data/server.sqlite").display().to_string()), "{cfg}");
-        assert!(cfg.contains(&folder.join("mods").display().to_string()), "{cfg}");
-        assert!(!pkg.join("config/server.toml").exists(), "the package stays untouched");
+        assert!(
+            cfg.contains(&folder.join("data/server.sqlite").display().to_string()),
+            "{cfg}"
+        );
+        assert!(
+            cfg.contains(&folder.join("mods").display().to_string()),
+            "{cfg}"
+        );
+        assert!(
+            !pkg.join("config/server.toml").exists(),
+            "the package stays untouched"
+        );
         assert_eq!(res.profile.name, "Weekend");
         assert!(e.core.host_settings(&e.id).unwrap().configured);
     }
@@ -592,8 +616,15 @@ mod fake {
         let second = e.core.host_create("Second").unwrap();
         assert_ne!(second, e.id);
         let s2 = e.core.host_settings(&second).unwrap();
-        assert!(first.port_clashes(&s2).is_empty(), "the new server got other ports");
-        assert_eq!(s2.package_dir.as_deref(), Some(pkg.as_path()), "the installed release is reused");
+        assert!(
+            first.port_clashes(&s2).is_empty(),
+            "the new server got other ports"
+        );
+        assert_eq!(
+            s2.package_dir.as_deref(),
+            Some(pkg.as_path()),
+            "the installed release is reused"
+        );
         assert_eq!(e.core.host_list().await.unwrap().len(), 2);
 
         let ports = free_ports(6);
@@ -605,7 +636,10 @@ mod fake {
             ..Default::default()
         };
         let req = |s| poe2_launcher_lib::host_ops::SetupRequest { settings: s };
-        e.core.host_setup(&e.id, req(mk(&ports[0..3], "First"))).await.unwrap();
+        e.core
+            .host_setup(&e.id, req(mk(&ports[0..3], "First")))
+            .await
+            .unwrap();
         let err = e
             .core
             .host_setup(&second, req(mk(&ports[0..3], "Second")))
@@ -613,7 +647,10 @@ mod fake {
             .unwrap_err()
             .to_string();
         assert!(err.contains("First uses port"), "{err}");
-        e.core.host_setup(&second, req(mk(&ports[3..6], "Second"))).await.unwrap();
+        e.core
+            .host_setup(&second, req(mk(&ports[3..6], "Second")))
+            .await
+            .unwrap();
         let profiles = e.core.profiles().unwrap();
         assert_eq!(profiles.len(), 2);
 
@@ -624,7 +661,11 @@ mod fake {
         e.core.host_delete(&second).await.unwrap();
         assert!(!folder.exists());
         assert_eq!(e.core.host_ids(), std::slice::from_ref(&e.id));
-        assert_eq!(e.core.profiles().unwrap().len(), 1, "its Servers entry went too");
+        assert_eq!(
+            e.core.profiles().unwrap().len(),
+            1,
+            "its Servers entry went too"
+        );
         assert!(pkg.is_dir(), "the first server still uses the package");
         assert!(e.core.host_delete(&second).await.is_err(), "gone");
 
@@ -689,9 +730,12 @@ async fn real_package_setup_start_status_log_stop() {
     };
     let res = e
         .core
-        .host_setup(&e.id, poe2_launcher_lib::host_ops::SetupRequest {
-            settings: s.clone(),
-        })
+        .host_setup(
+            &e.id,
+            poe2_launcher_lib::host_ops::SetupRequest {
+                settings: s.clone(),
+            },
+        )
         .await
         .unwrap();
     println!(
@@ -699,9 +743,19 @@ async fn real_package_setup_start_status_log_stop() {
         res.profile.name, res.profile.url
     );
     assert_eq!(res.profile.url, format!("http://127.0.0.1:{}", base + 2));
-    assert!(!e.core.runtime(&e.id).is_running(), "setup does not start the server");
+    assert!(
+        !e.core.runtime(&e.id).is_running(),
+        "setup does not start the server"
+    );
     let pkg_dir = out.package.dir.clone();
-    assert_eq!(res.config_file, e.tmp.path().join("data/servers").join(&e.id).join("server.toml"));
+    assert_eq!(
+        res.config_file,
+        e.tmp
+            .path()
+            .join("data/servers")
+            .join(&e.id)
+            .join("server.toml")
+    );
     let cfg = std::fs::read_to_string(&res.config_file).unwrap();
     assert!(
         cfg.contains(&format!("0.0.0.0:{base}")) && cfg.contains("open_registration = false"),
@@ -863,7 +917,14 @@ async fn real_package_setup_start_status_log_stop() {
         }
     }
     println!("password absent from {checked} text files");
-    let log = std::fs::read_to_string(e.tmp.path().join("data/servers").join(&e.id).join("server.log")).unwrap();
+    let log = std::fs::read_to_string(
+        e.tmp
+            .path()
+            .join("data/servers")
+            .join(&e.id)
+            .join("server.log"),
+    )
+    .unwrap();
     assert!(!log.contains(password));
 
     // Start again from the saved state (what autostart does) and stop.

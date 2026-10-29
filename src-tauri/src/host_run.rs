@@ -197,7 +197,10 @@ impl HostRuntime {
     /// The chart history (oldest first).
     pub fn usage_history(&self) -> (Vec<f32>, Vec<u64>) {
         let u = self.usage.lock().unwrap();
-        (u.cpu.iter().copied().collect(), u.rss.iter().copied().collect())
+        (
+            u.cpu.iter().copied().collect(),
+            u.rss.iter().copied().collect(),
+        )
     }
 
     /// Drops the launcher's "autostart failed" notes from the log tail (a new package fixed
@@ -876,9 +879,13 @@ mod usage_tests {
 
     #[test]
     fn proc_fields_are_read() {
-        let stat = "1234 (poe server) S 1 1234 1234 0 -1 4194560 100 0 0 0 250 50 0 0 20 0 9 0 1 2 3";
+        let stat =
+            "1234 (poe server) S 1 1234 1234 0 -1 4194560 100 0 0 0 250 50 0 0 20 0 9 0 1 2 3";
         assert_eq!(parse_stat_ticks(stat), Some(300));
-        assert_eq!(parse_status_rss("Name:\tx\nVmRSS:\t  2048 kB\n"), Some(2 * 1024 * 1024));
+        assert_eq!(
+            parse_status_rss("Name:\tx\nVmRSS:\t  2048 kB\n"),
+            Some(2 * 1024 * 1024)
+        );
         assert_eq!(parse_status_rss("Name: x"), None);
     }
 
@@ -891,7 +898,10 @@ mod usage_tests {
         let (c, r) = rt.usage_history();
         assert_eq!((c.len(), r.len()), (USAGE_POINTS, USAGE_POINTS));
         assert_eq!(c[0], 5.0);
-        rt.log.lock().unwrap().push_back("[launcher] autostart failed: old".into());
+        rt.log
+            .lock()
+            .unwrap()
+            .push_back("[launcher] autostart failed: old".into());
         rt.log.lock().unwrap().push_back("server line".into());
         rt.forget_failed_starts();
         assert_eq!(rt.tail(10), ["server line"]);

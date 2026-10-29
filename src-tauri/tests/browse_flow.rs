@@ -361,13 +361,20 @@ async fn logs_are_listed_read_by_id_and_reported_without_private_data() {
     )
     .unwrap();
     std::fs::write(data.join("logs/notes.txt"), "not a game log").unwrap();
-    std::fs::write(data.join("servers").join(&sid).join("server.log"), "server up\n").unwrap();
+    std::fs::write(
+        data.join("servers").join(&sid).join("server.log"),
+        "server up\n",
+    )
+    .unwrap();
     std::fs::write(data.join("crash-dumps/crash1.dmp"), [b'M', b'D', 0, 0]).unwrap();
 
     let list = e.core.log_list();
     let ids: Vec<_> = list.files.iter().map(|f| f.id.as_str()).collect();
     assert!(ids.contains(&"game:game-1761000000.log"));
-    assert!(ids.contains(&format!("server:{sid}/server.log").as_str()), "{ids:?}");
+    assert!(
+        ids.contains(&format!("server:{sid}/server.log").as_str()),
+        "{ids:?}"
+    );
     assert!(ids.contains(&"crash:crash1.dmp"));
     assert!(
         !ids.iter().any(|i| i.contains("notes.txt")),

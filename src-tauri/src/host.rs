@@ -236,7 +236,10 @@ pub fn servers_config_dir(dirs: &Dirs) -> PathBuf {
 
 /// A server id: `s` and digits.
 pub fn valid_server_id(id: &str) -> bool {
-    id.len() >= 2 && id.len() <= 8 && id.starts_with('s') && id[1..].chars().all(|c| c.is_ascii_digit())
+    id.len() >= 2
+        && id.len() <= 8
+        && id.starts_with('s')
+        && id[1..].chars().all(|c| c.is_ascii_digit())
 }
 
 /// The ids of the hosted servers, in number order.
@@ -341,7 +344,10 @@ pub fn migrate_single_server(dirs: &Dirs) -> Result<bool> {
         (old_root.join("data"), new.data()),
         (old_root.join("backups"), new.backups()),
         (old_root.join("server.log"), new.log_file()),
-        (dirs.config.join("backup.json"), new.backup_settings_file().to_path_buf()),
+        (
+            dirs.config.join("backup.json"),
+            new.backup_settings_file().to_path_buf(),
+        ),
     ] {
         if from.exists() {
             std::fs::rename(&from, &to)
@@ -1093,7 +1099,12 @@ pub fn render_config(
         "open_registration",
         s.open_registration,
     );
-    set_str(&mut doc, &["database"], "path", &dirs.database().to_string_lossy());
+    set_str(
+        &mut doc,
+        &["database"],
+        "path",
+        &dirs.database().to_string_lossy(),
+    );
     // Everything the server writes goes to its own folder: servers share the package folder.
     set_str(&mut doc, &["mods"], "dir", &dirs.mods().to_string_lossy());
     set_str(
@@ -1279,7 +1290,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dirs = Dirs::under(tmp.path());
         std::fs::create_dir_all(servers_config_dir(&dirs)).unwrap();
-        for f in ["s2.json", "s10.json", "s1.json", "s1.backup.json", "notes.txt"] {
+        for f in [
+            "s2.json",
+            "s10.json",
+            "s1.json",
+            "s1.backup.json",
+            "notes.txt",
+        ] {
             std::fs::write(servers_config_dir(&dirs).join(f), "{}").unwrap();
         }
         assert_eq!(server_ids(&dirs), ["s1", "s2", "s10"]);
@@ -1288,18 +1305,27 @@ mod tests {
     #[test]
     fn new_servers_get_the_next_free_ports() {
         let first = HostSettings::default();
-        assert_eq!(next_free_ports(&[], &|_| false).unwrap(), (20481, 6112, 8080));
+        assert_eq!(
+            next_free_ports(&[], &|_| false).unwrap(),
+            (20481, 6112, 8080)
+        );
         assert_eq!(
             next_free_ports(std::slice::from_ref(&first), &|_| false).unwrap(),
             (20491, 6122, 8090)
         );
         // A port taken by another program moves the new server on too.
         let busy = |s: &HostSettings| s.web_port == 8090;
-        assert_eq!(next_free_ports(std::slice::from_ref(&first), &busy).unwrap(), (20501, 6132, 8100));
+        assert_eq!(
+            next_free_ports(std::slice::from_ref(&first), &busy).unwrap(),
+            (20501, 6132, 8100)
+        );
         let mut other = first.clone();
         (other.login_port, other.instance_port, other.web_port) = (30000, 30001, 20491);
         assert_eq!(first.port_clashes(&other), Vec::<u16>::new());
-        assert_eq!(next_free_ports(&[first, other], &|_| false).unwrap(), (20501, 6132, 8100));
+        assert_eq!(
+            next_free_ports(&[first, other], &|_| false).unwrap(),
+            (20501, 6132, 8100)
+        );
     }
 
     #[test]
@@ -1327,7 +1353,10 @@ mod tests {
         assert_eq!(HostSettings::load(d.settings_file()).unwrap(), old);
         assert_eq!(std::fs::read_to_string(d.database()).unwrap(), "db");
         assert_eq!(std::fs::read_to_string(d.log_file()).unwrap(), "log");
-        assert_eq!(std::fs::read_to_string(d.config()).unwrap(), "edited = true\n");
+        assert_eq!(
+            std::fs::read_to_string(d.config()).unwrap(),
+            "edited = true\n"
+        );
         assert!(d.backup_settings_file().is_file());
         assert!(!dirs.config.join("host.json").exists());
         assert!(!migrate_single_server(&dirs).unwrap(), "done once");
@@ -1362,7 +1391,8 @@ mod tests {
 
     #[test]
     fn asset_names_are_parsed() {
-        let n = parse_asset_name("poe-server-v0.1.0-game-0.5.5e.hotfix1-linux-x86_64.tar.gz").unwrap();
+        let n =
+            parse_asset_name("poe-server-v0.1.0-game-0.5.5e.hotfix1-linux-x86_64.tar.gz").unwrap();
         assert_eq!(
             n,
             AssetName {
@@ -1372,7 +1402,8 @@ mod tests {
                 ext: "tar.gz".into()
             }
         );
-        let w = parse_asset_name("poe-server-v0.2.0-rc1-game-0.5.5e.hotfix1-windows-x86_64.zip").unwrap();
+        let w = parse_asset_name("poe-server-v0.2.0-rc1-game-0.5.5e.hotfix1-windows-x86_64.zip")
+            .unwrap();
         assert_eq!(
             (w.version.as_str(), w.platform.as_str(), w.ext.as_str()),
             ("0.2.0-rc1", "windows", "zip")
@@ -1563,7 +1594,10 @@ path = "runtime/server.sqlite"
             Some(dirs.database().to_str().unwrap())
         );
         // What the server writes goes to its own folder (servers share the package folder).
-        assert_eq!(doc["mods"]["dir"].as_str(), Some(dirs.mods().to_str().unwrap()));
+        assert_eq!(
+            doc["mods"]["dir"].as_str(),
+            Some(dirs.mods().to_str().unwrap())
+        );
         assert_eq!(
             doc["web"]["config_backup_dir"].as_str(),
             Some(dirs.config_backups().to_str().unwrap())
@@ -1582,7 +1616,8 @@ path = "runtime/server.sqlite"
 
     #[test]
     fn a_config_without_the_tables_still_gets_them() {
-        let out = render_config("", &HostSettings::default(), Path::new("/g"), &test_dirs()).unwrap();
+        let out =
+            render_config("", &HostSettings::default(), Path::new("/g"), &test_dirs()).unwrap();
         let doc: toml_edit::DocumentMut = out.parse().unwrap();
         assert_eq!(doc["web"]["bind"].as_str(), Some("127.0.0.1:8080"));
         assert_eq!(
@@ -1679,15 +1714,22 @@ path = "runtime/server.sqlite"
             d
         };
         let check = |d: &tempfile::TempDir| {
-            inspect_package(d.path(), "0.5.5e.hotfix1", std::env::consts::OS).map(|p| p.server_version)
+            inspect_package(d.path(), "0.5.5e.hotfix1", std::env::consts::OS)
+                .map(|p| p.server_version)
         };
         assert_eq!(
             check(&make(Some("modules/protocol/versions/0.5.5e.hotfix1.toml"))).unwrap(),
             "0.2.1"
         );
-        assert_eq!(check(&make(Some("versions/0.5.5e.hotfix1.toml"))).unwrap(), "0.2.1");
+        assert_eq!(
+            check(&make(Some("versions/0.5.5e.hotfix1.toml"))).unwrap(),
+            "0.2.1"
+        );
         let e = check(&make(None)).unwrap_err().to_string();
-        assert!(e.contains("modules/protocol/versions/0.5.5e.hotfix1.toml"), "{e}");
+        assert!(
+            e.contains("modules/protocol/versions/0.5.5e.hotfix1.toml"),
+            "{e}"
+        );
         // The version file of another game version does not count.
         assert!(check(&make(Some("versions/0.6.0.toml"))).is_err());
     }

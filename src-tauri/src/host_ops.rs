@@ -271,7 +271,8 @@ impl Core {
             login_port: login,
             instance_port: instance,
             web_port: web,
-            public_host: host::detect_lan_ip().map_or_else(|| "127.0.0.1".into(), |ip| ip.to_string()),
+            public_host: host::detect_lan_ip()
+                .map_or_else(|| "127.0.0.1".into(), |ip| ip.to_string()),
             ..HostSettings::default()
         };
         s.validate()?;
@@ -470,12 +471,17 @@ impl Core {
         if let Some(name) = host::package_name_of_asset(&release.asset_name) {
             let dir = dirs.packages().join(name);
             if let Ok(pkg) = host::inspect_package(&dir, &self.version().version, self.host_os()) {
-                self.host_step(id, &format!("{} is installed already (another server uses it)", pkg.name));
+                self.host_step(
+                    id,
+                    &format!("{} is installed already (another server uses it)", pkg.name),
+                );
                 return self.host_use_package(id, pkg, None, false, "shared");
             }
         }
         let (named, got) = self.host_download_verified(id, &release).await?;
-        let out = self.host_adopt(id, &named, Some(got), true, "download").await;
+        let out = self
+            .host_adopt(id, &named, Some(got), true, "download")
+            .await;
         let _ = tokio::fs::remove_file(&named).await;
         out
     }
@@ -490,7 +496,10 @@ impl Core {
     ) -> Result<(PathBuf, String)> {
         let dirs = self.host_dirs(id);
         reject_steam_paths(&dirs.packages(), "server folder")?;
-        self.host_step(id, &format!("looking at the checksum of {}", release.asset_name));
+        self.host_step(
+            id,
+            &format!("looking at the checksum of {}", release.asset_name),
+        );
         let expected = host::parse_sha256_file(
             &host::download_text(&release.sha256_url).await?,
             &release.asset_name,
@@ -558,7 +567,8 @@ impl Core {
                 "no .sha256 file next to the package: unpacking without a check"
             },
         );
-        self.host_adopt(id, &source, Some(sha), verified, "file").await
+        self.host_adopt(id, &source, Some(sha), verified, "file")
+            .await
     }
 
     async fn host_adopt(
@@ -727,7 +737,11 @@ impl Core {
                 bail!(
                     "{} uses port {} already: pick other ports",
                     other.server_name,
-                    clash.iter().map(u16::to_string).collect::<Vec<_>>().join(", ")
+                    clash
+                        .iter()
+                        .map(u16::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 );
             }
         }
@@ -790,7 +804,10 @@ impl Core {
                 && let Ok(o) = self.host_settings(&other_id)
                 && !s.port_clashes(&o).is_empty()
             {
-                bail!("{} runs on the same ports: stop it or change the ports", o.server_name);
+                bail!(
+                    "{} runs on the same ports: stop it or change the ports",
+                    o.server_name
+                );
             }
         }
         let busy = host::busy_ports(&s);
@@ -813,7 +830,9 @@ impl Core {
     /// Starts the servers the user asked to start with the launcher. Failures go to their logs.
     pub async fn host_autostart(&self) {
         for id in self.host_ids() {
-            let Ok(s) = self.host_settings(&id) else { continue };
+            let Ok(s) = self.host_settings(&id) else {
+                continue;
+            };
             if !(s.autostart && s.configured) {
                 continue;
             }

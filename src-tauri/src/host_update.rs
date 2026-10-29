@@ -158,7 +158,10 @@ impl Core {
         match &result {
             Ok(o) => {
                 self.host_step(id, &format!("updated to {}", o.to));
-                self.emit("host:installed", json!({"id": id, "package": o.package.name}));
+                self.emit(
+                    "host:installed",
+                    json!({"id": id, "package": o.package.name}),
+                );
             }
             Err(e) => self.host_step(id, &format!("the update failed: {e:#}")),
         }
@@ -357,7 +360,12 @@ impl Core {
         notes.join("; ")
     }
 
-    fn update_start_old(&self, id: &str, settings: &HostSettings, current: &PackageInfo) -> Result<()> {
+    fn update_start_old(
+        &self,
+        id: &str,
+        settings: &HostSettings,
+        current: &PackageInfo,
+    ) -> Result<()> {
         if !self.host_dirs(id).config().is_file() && settings.configured {
             self.host_write_configs(id, settings, current)?;
         }

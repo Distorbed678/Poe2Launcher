@@ -156,7 +156,8 @@ pub async fn web_admin_open(app: App<'_>, handle: tauri::AppHandle, id: String) 
 /// Opens the server's page for new accounts in the system browser.
 #[tauri::command]
 pub fn register_page_open(app: App<'_>, handle: tauri::AppHandle, id: String) -> Res<()> {
-    app.register_page_open(&id, &TauriOpener(handle)).map_err(err)
+    app.register_page_open(&id, &TauriOpener(handle))
+        .map_err(err)
 }
 
 /// "Open web admin" of a server hosted on this computer.
