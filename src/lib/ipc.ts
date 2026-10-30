@@ -43,7 +43,7 @@ export const ipc = {
   accountRefresh: (id: string) => call<ProfileView>('account_refresh', { id }),
   /** Admin only: opens the server's web admin in the system browser, already signed in. */
   webAdminOpen: (id: string) => call<void>('web_admin_open', { id }),
-  registerPageOpen: (id: string) => call<void>('register_page_open', { id }),
+  serverPageOpen: (id: string, page: 'admin' | 'register') => call<void>('server_page_open', { id, page }),
   hostWebAdminOpen: (id: string) => call<void>('host_web_admin_open', { id }),
   serverInfo: (id: string) => call<ServerInfo>('server_info', { id }),
   /** `GET /server` plus the round-trip time measured by the launcher. */

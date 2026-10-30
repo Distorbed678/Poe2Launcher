@@ -92,6 +92,9 @@ pub struct HostStatus {
     pub run: RunState,
     /// The web API answers.
     pub info: Option<ServerInfo>,
+    /// The server has no account yet, so its first admin still has to be made in the web admin
+    /// (`GET /setup` from this computer); `None` while it does not answer.
+    pub setup_needed: Option<bool>,
     pub web_url: String,
     pub lan_ip: Option<String>,
     pub log_file: PathBuf,
@@ -121,6 +124,12 @@ pub struct HostMetrics {
     pub uptime_secs: Option<u64>,
     /// The server reports no metrics (`[metrics] enabled = false`, or an older server).
     pub server_metrics: bool,
+}
+
+/// `GET /setup`: whether the server still needs its first admin.
+#[derive(Debug, Clone, Deserialize)]
+struct SetupState {
+    needed: bool,
 }
 
 /// The newest sample of `GET /local/metrics`.
@@ -341,7 +350,20 @@ impl Core {
         } else {
             None
         };
+        let setup_needed = if info.is_some() {
+            tokio::time::timeout(
+                Duration::from_millis(1500),
+                ApiClient::new(&web_url).get_json::<SetupState>("/setup"),
+            )
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .map(|s| s.needed)
+        } else {
+            None
+        };
         Ok(HostStatus {
+            setup_needed,
             id: id.to_owned(),
             package,
             package_problem,

@@ -407,6 +407,8 @@ export interface HostStatus {
   run: RunState;
   /** The web API answers (the server is ready). */
   info: ServerInfo | null;
+  /** The server still has no account (its first admin is made in the web admin); null: not answering. */
+  setup_needed: boolean | null;
   web_url: string;
   lan_ip: string | null;
   log_file: string;

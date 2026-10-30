@@ -54,8 +54,6 @@
   const ready = $derived(status?.info != null);
   const errors = $derived(form ? validateHostForm(form) : []);
   const rules = $derived(form ? portsToForward(form) : []);
-  const hostProfile = $derived(app.profiles.find((p) => p.id === status?.settings.profile_id));
-  const isAdmin = $derived(hostProfile?.logged_in === true && hostProfile.role === 'admin');
   const noGame = $derived(status !== null && !status.game_installed);
   const noPackage = $derived(status !== null && status.package === null);
   const dirty = $derived(!!form && !!saved && JSON.stringify(form) !== JSON.stringify(saved));
@@ -386,10 +384,10 @@
               <button type="button" class="link" onclick={() => (view = 'settings')}>settings</button>.
             </p>
           </div>
-        {:else if ready && !isAdmin}
+        {:else if status.setup_needed === true}
           <div class="notice accent">
             <span class="notice-title"><Icon name="shield" size={16} /> Admin account</span>
-            <p>A new server's first admin is created in its web admin: <button type="button" class="link" onclick={openWebAdmin}>open it</button> and pick a name and password. Then log in on the Servers page.</p>
+            <p>This server has no account yet. Create its first admin in the web admin: <button type="button" class="link" onclick={openWebAdmin}>open it</button> and pick a name and password. Use the same account to sign in in the game.</p>
           </div>
         {/if}
         {#if noGame}<p class="err">The game is not installed: <a href="#/library">install it first</a>.</p>{/if}

@@ -166,7 +166,7 @@ pub fn run() {
             commands::profile_confirm_plain_http,
             commands::account_refresh,
             commands::web_admin_open,
-            commands::register_page_open,
+            commands::server_page_open,
             commands::host_web_admin_open,
             commands::hook_status,
             commands::hook_check,

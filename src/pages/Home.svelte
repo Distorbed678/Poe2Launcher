@@ -3,7 +3,6 @@
   import { app } from '../lib/app.svelte';
   import { formatNewsDate } from '../lib/format';
   import { serverCompat } from '../lib/gameversion';
-  import { isPlainHttpBlocked } from '../lib/url';
   import { updateHeadline } from '../lib/host';
   import { router } from '../lib/router.svelte';
   import Icon from '../lib/ui/Icon.svelte';
@@ -25,7 +24,7 @@
   let timer: ReturnType<typeof setInterval> | undefined;
 
   function check() {
-    if (sel && !isPlainHttpBlocked(sel)) void app.checkServer(sel.id);
+    if (sel) void app.checkServer(sel.id);
   }
 
   // The status follows the selected server and is looked at again every 30 s while this page is open.
@@ -45,6 +44,8 @@
     if (p.state === 'preparing') return `Preparing: ${p.step}...`;
     if (p.state === 'running') return 'Game running';
     if (p.state === 'exited' && !blocker) return p.code === 0 || p.code === null ? 'Game closed. Ready again.' : `Game exited with code ${p.code}`;
+    // Accounts belong to the server: the player signs in on the game's own login screen.
+    if (!blocker && !app.official && sel) return `Sign in on the game's login screen with your ${sel.name} account`;
     return null;
   });
 
@@ -61,8 +62,7 @@
     ...app.profiles.map((p) => ({
       value: p.id,
       label: p.name,
-      sub: p.logged_in ? `signed in as ${p.account}` : 'not signed in',
-      badges: p.logged_in ? [] : [{ text: 'log in', tone: 'warn' as const }],
+      sub: p.url,
     })),
     { value: MANAGE, label: 'Manage servers...', icon: 'settings' as const },
   ]);
@@ -104,7 +104,7 @@
           <span class="plate-text">
             <b>{ok?.name ?? sel.name}</b>
             <small>
-              {#if ok}{ok.online} online{ping !== undefined ? ` · ${ping} ms` : ''} · {sel.logged_in ? sel.account : 'not signed in'}
+              {#if ok}{ok.online} online{ping !== undefined ? ` · ${ping} ms` : ''}
               {:else if typeof info === 'string'}unreachable
               {:else}<Spinner size={10} /> checking{/if}
             </small>

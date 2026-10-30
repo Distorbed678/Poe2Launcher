@@ -5,10 +5,8 @@
   import { app } from '../app.svelte';
   import { ipc } from '../ipc';
   import { run, toasts } from '../notify.svelte';
-  import { ask } from '../confirm.svelte';
   import { ms } from '../motion';
   import { formatAgo, formatUptime } from '../format';
-  import { plainHttpWarning } from '../url';
   import { versionLabel } from '../gameversion';
   import {
     allRegions, allTags, contactLink, defaultFilter, effectiveVersion, existingProfile, filterServers, sortServers,
@@ -64,19 +62,8 @@
   onMount(() => void load(false));
 
   async function add(s: ListedServer) {
-    let agreed = false;
-    if (s.plain_http) {
-      const warning = plainHttpWarning('public') ?? '';
-      agreed = await ask({
-        title: `Add "${s.name}" over plain http?`,
-        message: `${warning}\n\nAddress: ${s.address}`,
-        acknowledge: 'I understand and want to use plain http for this server',
-        confirmLabel: 'Add server',
-      });
-      if (!agreed) return;
-    }
     adding = s.id;
-    const r = await run(() => ipc.profileAdd(s.name, s.address, agreed), `Added ${s.name} to your servers`);
+    const r = await run(() => ipc.profileAdd(s.name, s.address, false), `Added ${s.name} to your servers`);
     adding = null;
     if (r) {
       await Promise.all([app.refreshProfiles(), app.refreshSettings()]);

@@ -5,7 +5,6 @@ import { hookReady } from './hook';
 import { run, toasts } from './notify.svelte';
 import { updater } from './update.svelte';
 import { ask } from './confirm.svelte';
-import { isPlainHttpBlocked } from './url';
 import { RateTracker } from './rate.svelte';
 import { installBytesDone, installBytesTotal } from './transfer';
 import { compatBlocker, isOfficial, serverCompat, versionLabel, type Compat } from './gameversion';
@@ -97,7 +96,6 @@ class AppState {
     this.play = (await run(() => ipc.playState())) ?? this.play;
     this.ready = true;
     // Roles may have changed on the servers since the last run: re-read them quietly.
-    void this.refreshRoles();
     void this.checkServers();
     void this.loadNews();
     // A newer server release for the hosted servers: quiet, once at start (and on Host / Home).
@@ -207,9 +205,9 @@ class AppState {
     }
   }
 
-  /** Quietly checks every server that is allowed to be contacted, so the version chips are right. */
+  /** Quietly checks every server, so the version chips are right (`GET /server`: nothing secret). */
   async checkServers(): Promise<void> {
-    const ids = this.profiles.filter((p) => !isPlainHttpBlocked(p)).map((p) => p.id);
+    const ids = this.profiles.map((p) => p.id);
     await Promise.allSettled(ids.map((id) => this.checkServer(id)));
     if (this.selected && ids.includes(this.selected.id)) void this.checkMods(this.selected.id);
   }
@@ -278,28 +276,10 @@ class AppState {
     d.busy = false;
   }
 
-  /** Re-reads each logged-in account's role (`GET /me`). Quiet: an unreachable server just keeps the old role. */
-  async refreshRoles(): Promise<void> {
-    const ids = this.profiles.filter((p) => p.logged_in && !isPlainHttpBlocked(p)).map((p) => p.id);
-    if (ids.length === 0) return;
-    await Promise.allSettled(ids.map((id) => ipc.accountRefresh(id)));
-    try {
-      this.profiles = await ipc.profiles();
-    } catch {
-      /* keep what is shown */
-    }
-  }
-
-  /** "Open web admin": the backend checks the role, trades the token and opens the system browser. */
-  async openWebAdmin(id: string): Promise<void> {
-    const p = this.profiles.find((x) => x.id === id);
-    if (!p) return;
-    if (isPlainHttpBlocked(p)) {
-      toasts.show('error', 'This server uses plain http://. Allow it first (Servers), then try again.');
-      return;
-    }
-    await run(() => ipc.webAdminOpen(id), 'Opening the web admin in your browser...');
-    await this.refreshProfiles();
+  /** A page of the server's web admin in the browser: `admin` (it asks for its own login) or
+   * `register` (new accounts). The launcher has no login: accounts belong to the server. */
+  async openServerPage(id: string, page: 'admin' | 'register'): Promise<void> {
+    await run(() => ipc.serverPageOpen(id, page), page === 'admin' ? 'Opening the web admin in your browser...' : 'Opening the register page in your browser...');
   }
 
   async refreshSettings(): Promise<void> {
@@ -446,8 +426,6 @@ class AppState {
     if (this.play.state === 'preparing' || this.play.state === 'running') return 'The game is already starting or running';
     if (this.official) return null;
     if (!this.selected) return 'Add a server first (Servers)';
-    if (isPlainHttpBlocked(this.selected)) return 'Allow plain http for this server first (Servers)';
-    if (!this.selected.logged_in) return 'Log in to the server first (Servers)';
     return compatBlocker(this.compat) ?? syncBlocker(this.modPlans[this.selected.id]);
   }
 }

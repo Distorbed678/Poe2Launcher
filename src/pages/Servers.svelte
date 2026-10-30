@@ -7,18 +7,16 @@
   import { ask } from '../lib/confirm.svelte';
   import { DUR, ease, ms } from '../lib/motion';
   import { listenHost } from '../lib/events';
-  import { needsPlainHttpConfirmation, normalizeServerUrl, plainHttpRisk, plainHttpWarning } from '../lib/url';
+  import { normalizeServerUrl } from '../lib/url';
   import { formatUptime } from '../lib/format';
   import { serverCompat, versionLabel } from '../lib/gameversion';
   import { isUp, runLabel } from '../lib/host';
   import { router } from '../lib/router.svelte';
   import PageHead from '../lib/ui/PageHead.svelte';
-  import PlainHttpNotice from '../lib/ui/PlainHttpNotice.svelte';
   import Icon from '../lib/ui/Icon.svelte';
   import Chip from '../lib/ui/Chip.svelte';
   import Empty from '../lib/ui/Empty.svelte';
   import Spinner from '../lib/ui/Spinner.svelte';
-  import AccountPanel from '../lib/ui/AccountPanel.svelte';
   import Tabs from '../lib/ui/Tabs.svelte';
   import ServerBrowser from '../lib/ui/ServerBrowser.svelte';
   import Drawer from '../lib/ui/Drawer.svelte';
@@ -151,22 +149,13 @@
   let url = $state('');
   let editing = $state<string | null>(null);
   let busy = $state<string | null>(null);
-  /** The user ticked "I understand" for the plain http address in the form. */
-  let agreeHttp = $state(false);
-
   const normalized = $derived(normalizeServerUrl(url));
-  const warning = $derived(normalized ? plainHttpWarning(plainHttpRisk(normalized)) : null);
-  const current = $derived(editing ? app.profiles.find((p) => p.id === editing) : undefined);
-  // An address that was confirmed before stays confirmed while it is not changed.
-  const alreadyAgreed = $derived(current !== undefined && current.url === normalized && current.plain_http_confirmed);
-  const needsAgreement = $derived(normalized !== null && needsPlainHttpConfirmation(normalized) && !alreadyAgreed);
-  const valid = $derived(name.trim().length > 0 && normalized !== null && (!needsAgreement || agreeHttp));
+  const valid = $derived(name.trim().length > 0 && normalized !== null);
 
   async function openForm(p?: Profile) {
     editing = p?.id ?? null;
     name = p?.name ?? '';
     url = p?.url ?? '';
-    agreeHttp = false;
     await tick();
     dialog?.showModal();
   }
@@ -179,7 +168,7 @@
   async function save(e: SubmitEvent) {
     e.preventDefault();
     const r = await run(
-      () => (editing ? ipc.profileUpdate(editing, name, url, agreeHttp) : ipc.profileAdd(name, url, agreeHttp)),
+      () => (editing ? ipc.profileUpdate(editing, name, url, false) : ipc.profileAdd(name, url, false)),
       editing ? 'Server updated' : 'Server added',
     );
     if (r) {
@@ -191,21 +180,11 @@
 
   // --- rows -----------------------------------------------------------------------------------
   let open = $state<Record<string, boolean>>({});
-  // A server you still have to log in to opens by itself: the login is what Play waits for.
-  const isOpen = (p: Profile) => open[p.id] ?? (app.selected?.id === p.id && !p.logged_in);
+  const isOpen = (p: Profile) => open[p.id] ?? false;
 
   async function check(id: string) {
     busy = id;
     await app.checkServer(id);
-    // Also re-read the account's role: a promotion shows without logging in again.
-    if (app.profiles.find((p) => p.id === id)?.logged_in) {
-      try {
-        await ipc.accountRefresh(id);
-        await app.refreshProfiles();
-      } catch {
-        /* the Check result is what matters */
-      }
-    }
     busy = null;
   }
 
@@ -215,7 +194,7 @@
     if (h) return hostDelete(h);
     const ok = await ask({
       title: `Remove "${p.name}"?`,
-      message: 'Its login is revoked and forgotten. The server itself is not touched.',
+      message: 'It leaves your list. The server itself is not touched.',
       confirmLabel: 'Remove server',
       danger: true,
     });
@@ -257,9 +236,6 @@
       </div>
       <div class="srv-chips">
         {#if hosted}<Chip tone="accent" icon="host">hosted</Chip>{/if}
-        {#if !p.logged_in}<Chip tone="warn">not logged in</Chip>{/if}
-        {#if p.role === 'admin'}<Chip tone="info" icon="shield">admin</Chip>{/if}
-        {#if p.plain_http === 'private' || p.plain_http === 'public'}<Chip tone="warn" icon="alert">plain http</Chip>{/if}
         {#if compat.kind === 'other'}<Chip tone="bad" icon="alert">needs {compat.version}</Chip>
         {:else if compat.kind === 'unsupported'}<Chip tone="bad" icon="alert">incompatible</Chip>{/if}
       </div>
@@ -271,12 +247,7 @@
         {/if}
         {#if selected}<Chip tone="accent" icon="check">selected</Chip>
         {:else}<button type="button" class="btn sm" onclick={() => app.select(p.id)}>Select</button>{/if}
-        {#if p.role === 'admin'}
-          <button type="button" class="btn sm" onclick={() => app.openWebAdmin(p.id)} title="Opens the server's web admin in your browser, already signed in">
-            Web admin <Icon name="external" size={12} />
-          </button>
-        {/if}
-        <button type="button" class="btn sm icon ghost" aria-expanded={isOpen(p)} aria-label="Details of {p.name}" title="Login, details, edit" onclick={() => (open[p.id] = !isOpen(p))}>
+        <button type="button" class="btn sm icon ghost" aria-expanded={isOpen(p)} aria-label="Details of {p.name}" title="Details, web admin, edit" onclick={() => (open[p.id] = !isOpen(p))}>
           <Icon name="chevron" size={15} class={isOpen(p) ? 'flip' : ''} />
         </button>
       </div>
@@ -290,8 +261,6 @@
     {/if}
     {#if isOpen(p)}
       <div class="srv-more" transition:slide={{ duration: ms(DUR.slow), easing: ease }}>
-        <PlainHttpNotice profile={p} onchange={() => app.refreshProfiles()} />
-        <AccountPanel profile={p} />
         {#if typeof info === 'string'}
           {#if !hosted}<p class="err">{info}</p>{/if}
         {:else if info}
@@ -307,6 +276,11 @@
           <button type="button" class="btn sm" onclick={() => check(p.id)} disabled={busy === p.id}>
             {#if busy === p.id}<Spinner size={12} />{:else}<Icon name="refresh" size={13} />{/if} Check
           </button>
+          <button type="button" class="btn sm" onclick={() => (hosted ? void run(() => ipc.hostWebAdminOpen(hosted.id)) : app.openServerPage(p.id, 'admin'))}
+            title="The server's web admin in your browser (it asks for its own login)">Web admin <Icon name="external" size={12} /></button>
+          {#if typeof info === 'object' && info.open_registration}
+            <button type="button" class="btn sm" onclick={() => app.openServerPage(p.id, 'register')} title="The server's page for new accounts">Create account <Icon name="external" size={12} /></button>
+          {/if}
           {#if hosted}
             <button type="button" class="btn sm" onclick={() => openManage(hosted.id)}><Icon name="settings" size={13} /> Manage</button>
           {:else}
@@ -396,14 +370,7 @@
       {#if normalized && normalized !== url.trim()}<span class="hint">Will be saved as <code>{normalized}</code></span>{/if}
       {#if url !== '' && !normalized}<span class="err">Not an address</span>{/if}
     </label>
-    {#if warning && needsAgreement}
-      <div class="notice" role="alert">
-        <span class="notice-title"><Icon name="alert" size={16} /> Unencrypted connection</span>
-        <p>{warning}</p>
-        <label class="check"><input type="checkbox" bind:checked={agreeHttp} /> <span>I understand and want to use plain http for this server</span></label>
-      </div>
-    {/if}
-    {#if editing}<p class="hint">Changing the address signs you out of this server.</p>{/if}
+    <p class="hint">The web address the server's owner gave you (its web API). Accounts are the server's: you sign in on the game's login screen.</p>
     <div class="actions">
       <button type="button" class="btn" onclick={closeForm}>Cancel</button>
       <button class="btn primary" type="submit" disabled={!valid}>{editing ? 'Save' : 'Add server'}</button>

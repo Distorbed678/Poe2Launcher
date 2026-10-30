@@ -153,10 +153,15 @@ pub async fn web_admin_open(app: App<'_>, handle: tauri::AppHandle, id: String) 
         .map_err(err)
 }
 
-/// Opens the server's page for new accounts in the system browser.
+/// Opens a page of the server's web admin (`register` or `admin`) in the system browser.
 #[tauri::command]
-pub fn register_page_open(app: App<'_>, handle: tauri::AppHandle, id: String) -> Res<()> {
-    app.register_page_open(&id, &TauriOpener(handle))
+pub fn server_page_open(
+    app: App<'_>,
+    handle: tauri::AppHandle,
+    id: String,
+    page: String,
+) -> Res<()> {
+    app.server_page_open(&id, &page, &TauriOpener(handle))
         .map_err(err)
 }
 

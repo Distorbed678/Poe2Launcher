@@ -505,12 +505,19 @@ impl Core {
             .map_err(|e| anyhow!("could not open the browser: {e:#}"))
     }
 
-    /// The server's own page for new accounts (`<address>/#/register` of its web admin), opened
-    /// in the system browser. Accounts are made there, not in the launcher.
-    pub fn register_page_open(&self, id: &str, opener: &dyn UrlOpener) -> Result<()> {
+    /// A page of the server's web admin in the system browser: `register` (its page for new
+    /// accounts, `#/register`) or `admin` (the web admin itself, which asks for its own login).
+    /// Accounts belong to the server; the launcher has no login of its own.
+    pub fn server_page_open(&self, id: &str, page: &str, opener: &dyn UrlOpener) -> Result<()> {
         let p = self.profile_store().get(id)?;
+        let base = p.url.trim_end_matches('/');
+        let url = match page {
+            "register" => format!("{base}/#/register"),
+            "admin" => format!("{base}/"),
+            other => bail!("unknown server page {other}"),
+        };
         opener
-            .open(&format!("{}/#/register", p.url.trim_end_matches('/')))
+            .open(&url)
             .map_err(|e| anyhow!("could not open the browser: {e:#}"))
     }
 
@@ -949,13 +956,9 @@ impl Core {
                 cfg.install_dir.display()
             );
         }
+        // No launcher login: Play points the game at the server, and the player signs in on the
+        // game's own login screen with an account of that server (its Remember Me keeps it).
         let (profile, client) = self.client_for(profile_id)?;
-        require_secure(&profile, "login token")?;
-        let session = self
-            .tokens
-            .get(profile_id)?
-            .filter(|s| s.expires_at > now_secs())
-            .ok_or_else(|| anyhow!("log in to {} first (Account page)", profile.name))?;
 
         step("asking the server");
         let info = client.server_info().await?;
@@ -976,19 +979,6 @@ impl Core {
 
         step("preparing the Proton prefix");
         play::ensure_prefix(&cfg).await?;
-
-        step("signing in");
-        let game = match client.game_token(&session.token).await {
-            Ok(g) => g,
-            Err(e) if e.is_unauthorized() => {
-                self.tokens.delete(profile_id)?;
-                bail!("the server no longer accepts this login; log in again");
-            }
-            Err(e) => return Err(e.into()),
-        };
-        let token = poe_hook_deploy::login_token::parse_token_hex(&game.token)?;
-        let docs = play::token_documents_dir(&cfg.prefix_dir)?;
-        poe_hook_deploy::write_login_token(&docs, &game.account.username, token)?;
 
         step("deploying the hook");
         let opts = options.clone();

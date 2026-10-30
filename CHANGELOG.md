@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0
+
+- **No launcher login.** Each server has its own accounts, so the launcher no longer signs in: pick a server and press Play, and sign in on the game's own login screen with an account of that server (the game's Remember Me keeps it). The login form, the plain-http confirmation and the admin badge are gone from the Servers page; a server's row offers **Web admin** (the server's web admin in the browser, with its own login) and **Create account** (its register page, when registration is open).
+- **The first-admin notice** in Manage > Overview now follows the server itself: it shows only while the server has no account yet (`GET /setup`) and disappears once the first admin exists.
+
 ## 0.6.0
 
 - **Client 0.5.5e Hotfix 1 only.** 0.5.5e is no longer offered; saved settings for it (its install folder, a selected 0.5.5e) are dropped when the settings are read. The nested client hook is hook-v0.5.0.

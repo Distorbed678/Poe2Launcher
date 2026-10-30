@@ -293,8 +293,9 @@ async fn settings_refuse_steam_directories() {
 }
 
 /// Play against the mock server with a fake install, fake DLLs and a fake Proton (a shell
-/// script): the preparation writes the game token (not the launcher token) for the client,
-/// deploys the hook and starts the client the way ProtonLaunch does.
+/// script): no launcher login is needed (the player signs in on the game's login screen); the
+/// preparation deploys the hook (with the server's register page) and starts the client the way
+/// ProtonLaunch does, and writes no login token.
 #[cfg(unix)]
 #[tokio::test]
 async fn play_prepares_everything_and_starts_proton() {
@@ -337,27 +338,17 @@ async fn play_prepares_everything_and_starts_proton() {
         .unwrap();
     let p = e.core.add_profile("Mock", &url, false).unwrap();
 
-    // Not logged in: refused with a pointer to the Account page.
-    let err = e.core.play(&p.id).await.unwrap_err().to_string();
-    assert!(err.contains("log in"), "{err}");
-    assert_eq!(e.core.play_state(), PlayState::Idle);
-
-    e.core.login(&p.id, "alice", "correct horse").await.unwrap();
+    // No launcher login: Play works, and nothing is signed in for the game.
     e.core.play(&p.id).await.unwrap();
-
-    // The client got the GAME token; the launcher still holds its own, still valid.
     let prefix = e.core.dirs.prefix_dir();
     let docs = prefix.join("pfx/drive_c/users/steamuser/Documents/My Games/Path of Exile 2");
-    let cred = std::fs::read(docs.join("poe2_production_login.credentials")).unwrap();
-    assert_eq!(cred, [0xbb; 32]);
-    let ini = std::fs::read_to_string(docs.join("poe2_production_Config.ini")).unwrap();
+    assert!(!docs.join("poe2_production_login.credentials").exists());
+    assert_eq!(*mock.game_token_calls.lock().unwrap(), 0);
+    let cfg = std::fs::read_to_string(install.join("poe-hook.toml")).unwrap();
     assert!(
-        ini.contains("username=Alice") && ini.contains("save_login=true"),
-        "{ini}"
+        cfg.contains(&format!("register_url = \"{url}/#/register\"")),
+        "{cfg}"
     );
-    assert_eq!(e.tokens.get(&p.id).unwrap().unwrap().token, LAUNCHER_TOKEN);
-    assert!(mock.live.lock().unwrap().contains(LAUNCHER_TOKEN));
-    assert_eq!(*mock.game_token_calls.lock().unwrap(), 1);
 
     // Deployed into the (temporary) install: gateway, hook config, DLLs, appid.
     let gateway = std::fs::read(install.join("gateway_list.txt")).unwrap();

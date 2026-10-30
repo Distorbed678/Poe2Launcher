@@ -90,6 +90,7 @@ export function installMock(params: URLSearchParams): void {
       package: hostVersion ? hostPkg(hostVersion) : null, package_problem: null, platform: 'linux', game_version: current().version, game_installed: current().installed,
       install_dir: status().install_dir, run: running ? { state: 'running', pid: 4242 } : { state: 'stopped' },
       info: running ? { name: hostNames[id], version: current().version, cluster_id: 'main', online: 2, open_registration: true, login_host: '192.168.1.20', login_port: 20481, instance_port: 6112, gateway_region: null, uptime_secs: 11_520, motd: null, mods: [] } : null,
+      setup_needed: running ? params.has('nosetup') === false && params.has('setup') : null,
       web_url: `http://127.0.0.1:${8080 + 10 * n}`, lan_ip: '192.168.1.20',
       log_file: `/home/user/.local/share/poe2-launcher/servers/${id}/server.log`, folder: `/home/user/.local/share/poe2-launcher/servers/${id}`, busy: false, hosting_guide_url: 'https://example.invalid',
     };
